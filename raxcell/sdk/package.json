@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "private": false,
   "description": "TypeScript client for the Raxcell execution enforcement sandbox SDK.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Praxis-Agent-Architecture/Raxcell",
+    "directory": "raxcell/sdk"
+  },
+  "homepage": "https://github.com/Praxis-Agent-Architecture/Raxcell#readme",
+  "bugs": {
+    "url": "https://github.com/Praxis-Agent-Architecture/Raxcell/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
