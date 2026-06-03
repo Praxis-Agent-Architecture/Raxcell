@@ -46,6 +46,7 @@ jobs:
         run: pnpm test:sdk
 
       - name: Publish package
-        run: pnpm --dir raxcell/sdk publish --access public --no-git-checks --provenance
+        working-directory: raxcell/sdk
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
