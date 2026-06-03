@@ -1,0 +1,5 @@
+{
+  "kind": "raxcell.explainBackend.v1",
+  "platform": "auto",
+  "backendPreference": ["linux-bubblewrap"]
+}

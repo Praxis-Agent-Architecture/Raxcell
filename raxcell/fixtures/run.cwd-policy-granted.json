@@ -1,0 +1,41 @@
+{
+  "kind": "raxcell.run.v1",
+  "backendPreference": ["linux-bubblewrap"],
+  "policyGrants": [
+    {
+      "reason": "cwd-outside-declared-roots",
+      "path": ".",
+      "access": ["read"],
+      "grantedBy": "example-runtime"
+    }
+  ],
+  "action": {
+    "actionId": "fixture-cwd-granted-1",
+    "ownerRuntime": "example-runtime",
+    "intentLabel": "opaque command metadata",
+    "metadata": {}
+  },
+  "command": {
+    "argv": ["/usr/bin/printf", "cwd-granted"],
+    "cwd": ".",
+    "env": {},
+    "stdin": null
+  },
+  "enforcement": {
+    "profile": "workspace-write-no-network",
+    "filesystem": {
+      "read": ["/tmp"],
+      "write": ["/tmp"]
+    },
+    "network": "deny",
+    "process": {
+      "spawn": true
+    },
+    "resources": {
+      "timeoutMs": 1000
+    }
+  },
+  "fallback": {
+    "mode": "none"
+  }
+}

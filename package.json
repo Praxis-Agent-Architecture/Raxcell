@@ -1,32 +1,10 @@
 {
-  "name": "codex-monorepo",
+  "name": "raxcell-workspace",
   "private": true,
-  "description": "Tools for repo-wide maintenance.",
+  "description": "Workspace for the Raxcell execution enforcement sandbox SDK.",
   "scripts": {
-    "format": "prettier --check *.json *.md docs/*.md .github/workflows/*.yml **/*.js",
-    "format:fix": "prettier --write *.json *.md docs/*.md .github/workflows/*.yml **/*.js",
-    "write-hooks-schema": "cargo run --manifest-path ./codex-rs/Cargo.toml -p codex-hooks --bin write_hooks_schema_fixtures"
-  },
-  "devDependencies": {
-    "prettier": "^3.5.3"
-  },
-  "resolutions": {
-    "@modelcontextprotocol/sdk": "1.26.0",
-    "braces": "^3.0.3",
-    "flatted": "3.4.2",
-    "glob@10.4.5": "10.5.0",
-    "handlebars": "4.7.9",
-    "micromatch": "^4.0.8",
-    "minimatch@3.1.2": "3.1.4",
-    "minimatch@9.0.5": "9.0.7",
-    "path-to-regexp": "8.4.0",
-    "picomatch@2.3.1": "2.3.2",
-    "picomatch@4.0.3": "4.0.4",
-    "rollup": "4.59.0",
-    "semver": "^7.7.1"
-  },
-  "overrides": {
-    "punycode": "^2.3.1"
+    "build:sdk": "pnpm --dir raxcell/sdk build",
+    "test:sdk": "pnpm --dir raxcell/sdk test"
   },
   "engines": {
     "node": ">=22",

@@ -1,0 +1,23 @@
+kind = "raxcell.policyPack.v1"
+name = "workspace-toml"
+
+[profiles.workspace-write-no-network]
+preset = "workspace-write"
+network = "deny"
+backendPreference = ["linux-bubblewrap"]
+
+[profiles.workspace-write-no-network.filesystem]
+read = ["$workspace", "$home/.cache"]
+write = ["$workspace", "$tmp/build"]
+denyRead = []
+denyWrite = []
+
+[profiles.workspace-write-no-network.process]
+spawn = true
+
+[profiles.workspace-write-no-network.resources]
+timeoutMs = 600000
+maxOutputBytes = 2000000
+
+[profiles.workspace-write-no-network.fallback]
+mode = "none"

@@ -1,0 +1,36 @@
+{
+  "kind": "raxcell.run.v1",
+  "backendPreference": ["linux-bubblewrap"],
+  "action": {
+    "actionId": "fixture-linux-bwrap-1",
+    "ownerRuntime": "example-runtime",
+    "intentLabel": "opaque command metadata",
+    "metadata": {
+      "toolId": "opaque-to-raxcell"
+    }
+  },
+  "command": {
+    "argv": ["/usr/bin/printf", "raxcell-linux-bubblewrap"],
+    "cwd": ".",
+    "env": {},
+    "stdin": null
+  },
+  "enforcement": {
+    "profile": "workspace-write-no-network",
+    "filesystem": {
+      "read": ["."],
+      "write": ["."]
+    },
+    "network": "deny",
+    "process": {
+      "spawn": true
+    },
+    "resources": {
+      "timeoutMs": 1000,
+      "maxOutputBytes": 200000
+    }
+  },
+  "fallback": {
+    "mode": "none"
+  }
+}

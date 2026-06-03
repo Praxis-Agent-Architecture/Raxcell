@@ -1,0 +1,34 @@
+{
+  "kind": "raxcell.run.v1",
+  "backendPreference": ["linux-bubblewrap"],
+  "policyGrants": [],
+  "action": {
+    "actionId": "fixture-prepare-linux-1",
+    "ownerRuntime": "example-runtime",
+    "intentLabel": "prepare-only command metadata",
+    "metadata": {}
+  },
+  "command": {
+    "argv": ["/usr/bin/sh", "-c", "printf should-not-run >&2; exit 99"],
+    "cwd": ".",
+    "env": {},
+    "stdin": null
+  },
+  "enforcement": {
+    "profile": "workspace-write-no-network",
+    "filesystem": {
+      "read": ["."],
+      "write": ["."]
+    },
+    "network": "deny",
+    "process": {
+      "spawn": true
+    },
+    "resources": {
+      "timeoutMs": 1000
+    }
+  },
+  "fallback": {
+    "mode": "none"
+  }
+}

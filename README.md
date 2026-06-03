@@ -1,71 +1,80 @@
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-<p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+# Raxcell
 
----
+Raxcell is an execution enforcement sandbox SDK extracted from the Codex fork.
 
-## Quickstart
+The goal is to provide a reusable sandbox layer for agent harnesses, runtimes, SDKs, and platforms. Raxcell core owns execution boundaries and capability facts. Upper runtimes own approval, policy matrices, human gates, tool semantics, and model behavior.
 
-### Installing and running Codex CLI
+## Current Status
 
-Run the following on Mac or Linux to install Codex CLI:
+Stage 2 is implemented:
 
-```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
+- Linux `run` executes through bubblewrap on this host.
+- macOS Seatbelt and Windows native backend families are first-class protocol and dispatch targets, but fail closed on non-matching hosts until their runners are attached.
+- `host-observed` remains observation-only and does not silently execute isolated requests on the host.
+- The root npm workspace points at the Raxcell TypeScript SDK facade in `raxcell/sdk`.
+- Large Codex product surfaces have been removed from this branch.
+
+Stage 3 is implemented:
+
+- Policy packs resolve enforcement-only profiles.
+- JSON, YAML, and TOML policy pack files deserialize into the same protocol shape.
+- `resolve-profile` lowers profile presets and caller-supplied common root variables into explicit enforcement declarations.
+
+Stage 4 is implemented:
+
+- Linux bubblewrap consumes declared read/write filesystem roots.
+- Missing declared roots fail closed before execution.
+- `command.cwd` outside declared roots returns `POLICY_DECISION_REQUIRED`.
+- JSON-RPC worker emits `policy.decisionRequired` with typed JSON string data.
+- Upper runtime decisions are passed back as explicit `policyGrants`.
+
+Stage 5 is implemented:
+
+- Successful Linux run responses include `filesystemLowering`.
+- Nested read/write roots normalize to minimal mount authority.
+- Backend runtime roots are reported explicitly and filtered when declared roots cover them.
+
+Stage 6 backend control surface is in progress:
+
+- `prepare-run` / `prepareRun` dry-runs backend selection, capability checks, cwd/root lowering, and policy-decision handoff without spawning the command.
+- Linux prepare returns the same `filesystemLowering` report shape as successful run.
+- Linux prepare returns `backendArtifacts` with the bubblewrap argv artifact for upper-runtime audit.
+- macOS and Windows prepare fail closed until native lowering is attached.
+
+Stage 7 backend explain surface is in progress:
+
+- `explain-backend` / `explainBackend` returns selected backend capability facts, operation schemas, isolation primitives, runtime roots, and public-safe limits.
+- Linux explanation includes bubblewrap primitives and backend runtime roots.
+- `prepareRun` is described as no-process; `run` is described as process-spawning.
+
+Stage 8 native backend lowering is in progress:
+
+- macOS Seatbelt has a testable lowering artifact builder for SBPL profile text, `/usr/bin/sandbox-exec` args, network deny, and shared filesystem lowering reports.
+- Windows native has a testable lowering artifact builder for token mode, ACL-style roots, network block, and shared filesystem lowering reports.
+- macOS/Windows `run` and `prepareRun` still fail closed on unsupported hosts until native runners are attached.
+
+## Repository Layout
+
+- `raxcell/crates/protocol`: stable JSON protocol types shared by CLI, SDKs, and runtimes.
+- `raxcell/crates/core`: capability probe and execution backend dispatch.
+- `raxcell/crates/cli`: JSON CLI and stdio JSON-RPC worker.
+- `raxcell/sdk`: TypeScript facade package.
+- `raxcell/fixtures`: smoke-test JSON requests.
+- `specs/raxcell`: extraction specs and stage plans.
+
+## Verify
+
+```bash
+cargo test --manifest-path raxcell/Cargo.toml
+pnpm install
+pnpm build:sdk
+pnpm test:sdk
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.linux-bubblewrap.json
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.cwd-policy-required.json
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.cwd-policy-granted.json
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- prepare-run --stdin < raxcell/fixtures/prepare-run.linux-bubblewrap.json
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- explain-backend --stdin < raxcell/fixtures/explain-backend.linux-bubblewrap.json
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- resolve-profile --stdin < raxcell/fixtures/resolve.workspace.json
 ```
-
-Run the following on Windows to install Codex CLI:
-
-```
-powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
-```
-
-Codex CLI can also be installed via the following package managers:
-
-```shell
-# Install using npm
-npm install -g @openai/codex
-```
-
-```shell
-# Install using Homebrew
-brew install --cask codex
-```
-
-Then simply run `codex` to get started.
-
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
-
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
-
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
-
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
-
-</details>
-
-### Using Codex with your ChatGPT plan
-
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
-
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
-
-## Docs
-
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
 
 This repository is licensed under the [Apache-2.0 License](LICENSE).

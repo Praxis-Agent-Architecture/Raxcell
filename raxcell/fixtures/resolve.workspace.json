@@ -1,0 +1,10 @@
+{
+  "kind": "raxcell.resolveProfile.v1",
+  "packPaths": ["raxcell/fixtures/policy.workspace.json"],
+  "profile": "workspace-write-no-network",
+  "variables": {
+    "workspace": "/tmp/raxcell-workspace",
+    "home": "/home/agent",
+    "tmp": "/tmp/raxcell"
+  }
+}

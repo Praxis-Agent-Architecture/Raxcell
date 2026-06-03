@@ -1,7 +1,5 @@
 packages:
-  - codex-cli
-  - codex-rs/responses-api-proxy/npm
-  - sdk/typescript
+  - raxcell/sdk
 
 ignoredBuiltDependencies:
   - esbuild

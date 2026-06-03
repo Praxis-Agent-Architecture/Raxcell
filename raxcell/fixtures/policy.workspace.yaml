@@ -1,0 +1,24 @@
+kind: raxcell.policyPack.v1
+name: workspace-yaml
+profiles:
+  workspace-write-no-network:
+    preset: workspace-write
+    filesystem:
+      read:
+        - $workspace
+        - $home/.cache
+      write:
+        - $workspace
+        - $tmp/build
+      denyRead: []
+      denyWrite: []
+    network: deny
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 600000
+      maxOutputBytes: 2000000
+    backendPreference:
+      - linux-bubblewrap
+    fallback:
+      mode: none

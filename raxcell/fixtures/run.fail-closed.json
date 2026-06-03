@@ -1,0 +1,36 @@
+{
+  "kind": "raxcell.run.v1",
+  "backendPreference": ["host-observed"],
+  "action": {
+    "actionId": "fixture-run-1",
+    "ownerRuntime": "example-runtime",
+    "intentLabel": "opaque command metadata",
+    "metadata": {
+      "toolId": "opaque-to-raxcell"
+    }
+  },
+  "command": {
+    "argv": ["echo", "hello"],
+    "cwd": "/tmp",
+    "env": {},
+    "stdin": null
+  },
+  "enforcement": {
+    "profile": "workspace-write-no-network",
+    "filesystem": {
+      "read": ["/tmp"],
+      "write": ["/tmp"]
+    },
+    "network": "deny",
+    "process": {
+      "spawn": true
+    },
+    "resources": {
+      "timeoutMs": 1000,
+      "maxOutputBytes": 200000
+    }
+  },
+  "fallback": {
+    "mode": "none"
+  }
+}

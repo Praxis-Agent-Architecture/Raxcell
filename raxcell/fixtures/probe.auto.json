@@ -1,0 +1,16 @@
+{
+  "kind": "raxcell.probe.v1",
+  "platform": "auto",
+  "backendPreference": [
+    "linux-bubblewrap",
+    "macos-seatbelt",
+    "windows-elevated",
+    "windows-unelevated"
+  ],
+  "requirements": {
+    "filesystem": ["read-restrict", "write-restrict"],
+    "network": ["deny"],
+    "process": ["spawn"],
+    "resource": ["timeout"]
+  }
+}
