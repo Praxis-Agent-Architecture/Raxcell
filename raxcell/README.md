@@ -1,33 +1,42 @@
-# Raxcell
+# Raxcell Rust Workspace
 
-Raxcell is the execution enforcement sandbox SDK extracted from the Codex fork.
+This workspace contains the Rust implementation of the Raxcell execution-enforcement sandbox SDK.
 
-Stage 2 keeps the protocol, CLI/worker shape, and backend capability reporting while adding a Linux bubblewrap runner. macOS Seatbelt and Windows native backends remain first-class families and fail closed on non-matching hosts until their runners are attached.
+## Crates
 
-Raxcell core owns enforcement facts and execution boundaries. Upper runtimes own governance, approval, policy matrices, human gates, and model behavior control.
+- `raxcell-protocol`: stable JSON protocol types.
+- `raxcell-core`: backend dispatch, policy resolution, prepare/run logic.
+- `raxcell-cli`: CLI and stdio JSON-RPC worker.
 
-## Smoke Commands
+## Linux Backend
 
-Run tests:
+The `linux-bubblewrap` backend is usable in `0.1.0`.
+
+It supports:
+
+- declared filesystem read/write roots;
+- network deny;
+- timeout;
+- cwd coverage checks;
+- explicit `policyGrants`;
+- `filesystemLowering` reports;
+- `backendArtifacts` with full bubblewrap argv from `prepareRun`.
+
+## Native Backends
+
+macOS Seatbelt and Windows native backend families are protocol-visible.
+
+Current behavior:
+
+- fail closed on unsupported hosts;
+- source-level lowering artifact models exist for future native runner attachment;
+- no macOS or Windows command execution is enabled in this Linux-first `0.1.0` stage.
+
+## Verify
 
 ```bash
 cargo test --manifest-path raxcell/Cargo.toml
-```
-
-Probe current host:
-
-```bash
 cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- probe --stdin < raxcell/fixtures/probe.auto.json
-```
-
-Run fixture through Linux bubblewrap:
-
-```bash
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- prepare-run --stdin < raxcell/fixtures/prepare-run.linux-bubblewrap.json
 cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.linux-bubblewrap.json
-```
-
-Run fixture in explicit fail-closed observation mode:
-
-```bash
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.fail-closed.json
 ```

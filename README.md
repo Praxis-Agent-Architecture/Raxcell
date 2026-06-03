@@ -1,80 +1,210 @@
 # Raxcell
 
-Raxcell is an execution enforcement sandbox SDK extracted from the Codex fork.
+Raxcell is an execution-enforcement sandbox SDK for agent runtimes.
 
-The goal is to provide a reusable sandbox layer for agent harnesses, runtimes, SDKs, and platforms. Raxcell core owns execution boundaries and capability facts. Upper runtimes own approval, policy matrices, human gates, tool semantics, and model behavior.
+It gives an agent harness a small, typed control surface for probing sandbox capabilities, preparing a sandboxed command, auditing backend lowering, and then executing the command through a platform backend.
 
-## Current Status
+Raxcell is not Praxis-specific. Praxis is the first target runtime, but the contract is intended to be usable by any agent framework that needs a declarative sandbox boundary.
 
-Stage 2 is implemented:
+## Status
 
-- Linux `run` executes through bubblewrap on this host.
-- macOS Seatbelt and Windows native backend families are first-class protocol and dispatch targets, but fail closed on non-matching hosts until their runners are attached.
-- `host-observed` remains observation-only and does not silently execute isolated requests on the host.
-- The root npm workspace points at the Raxcell TypeScript SDK facade in `raxcell/sdk`.
-- Large Codex product surfaces have been removed from this branch.
+Current version: `0.1.0`
 
-Stage 3 is implemented:
+Linux is usable today:
 
-- Policy packs resolve enforcement-only profiles.
-- JSON, YAML, and TOML policy pack files deserialize into the same protocol shape.
-- `resolve-profile` lowers profile presets and caller-supplied common root variables into explicit enforcement declarations.
-
-Stage 4 is implemented:
-
-- Linux bubblewrap consumes declared read/write filesystem roots.
-- Missing declared roots fail closed before execution.
+- `linux-bubblewrap` can run commands through bubblewrap.
+- Filesystem read/write roots are declared per request.
+- Network deny is enforced with bubblewrap network isolation.
+- Timeouts are enforced by Raxcell process management.
+- Missing roots fail closed.
 - `command.cwd` outside declared roots returns `POLICY_DECISION_REQUIRED`.
-- JSON-RPC worker emits `policy.decisionRequired` with typed JSON string data.
-- Upper runtime decisions are passed back as explicit `policyGrants`.
+- Upper runtimes can retry with explicit `policyGrants`.
+- `prepareRun` returns `filesystemLowering` and backend-specific `backendArtifacts`.
+- Linux `backendArtifacts` include the complete bubblewrap argv.
 
-Stage 5 is implemented:
+macOS and Windows are protocol-visible but not enabled as executable runners in `0.1.0`:
 
-- Successful Linux run responses include `filesystemLowering`.
-- Nested read/write roots normalize to minimal mount authority.
-- Backend runtime roots are reported explicitly and filtered when declared roots cover them.
+- `macos-seatbelt` has an internal Seatbelt lowering artifact model.
+- `windows-elevated` and `windows-unelevated` have internal token/ACL/WFP lowering artifact models.
+- Unsupported or unattached native backends fail closed.
 
-Stage 6 backend control surface is in progress:
+## Architecture
 
-- `prepare-run` / `prepareRun` dry-runs backend selection, capability checks, cwd/root lowering, and policy-decision handoff without spawning the command.
-- Linux prepare returns the same `filesystemLowering` report shape as successful run.
-- Linux prepare returns `backendArtifacts` with the bubblewrap argv artifact for upper-runtime audit.
-- macOS and Windows prepare fail closed until native lowering is attached.
+From an agent runtime's perspective:
 
-Stage 7 backend explain surface is in progress:
+```text
+Agent / Harness
+  -> Runtime policy middleware
+  -> Raxcell TypeScript client or JSON-RPC worker
+  -> Raxcell core
+  -> linux-bubblewrap / future macOS Seatbelt / future Windows native
+```
 
-- `explain-backend` / `explainBackend` returns selected backend capability facts, operation schemas, isolation primitives, runtime roots, and public-safe limits.
-- Linux explanation includes bubblewrap primitives and backend runtime roots.
-- `prepareRun` is described as no-process; `run` is described as process-spawning.
+Raxcell owns:
 
-Stage 8 native backend lowering is in progress:
+- execution boundaries;
+- backend capability facts;
+- backend lowering reports;
+- backend-specific artifacts;
+- fail-closed execution behavior.
 
-- macOS Seatbelt has a testable lowering artifact builder for SBPL profile text, `/usr/bin/sandbox-exec` args, network deny, and shared filesystem lowering reports.
-- Windows native has a testable lowering artifact builder for token mode, ACL-style roots, network block, and shared filesystem lowering reports.
-- macOS/Windows `run` and `prepareRun` still fail closed on unsupported hosts until native runners are attached.
+Upper runtimes own:
+
+- approval;
+- human gates;
+- policy matrices;
+- tool semantics;
+- model behavior;
+- prompt or intent interpretation.
+
+## TypeScript Package
+
+The TypeScript facade package is:
+
+```text
+@praxis-ai/raxcell@0.1.0
+```
+
+Install from a local tarball:
+
+```bash
+pnpm add /path/to/praxis-ai-raxcell-0.1.0.tgz
+```
+
+Use it with a Raxcell CLI binary path:
+
+```ts
+import { RaxcellClient, type RunRequest } from "@praxis-ai/raxcell";
+
+const raxcell = new RaxcellClient({
+  binaryPath: "/absolute/path/to/raxcell",
+});
+
+const request: RunRequest = {
+  kind: "raxcell.run.v1",
+  backendPreference: ["linux-bubblewrap"],
+  policyGrants: [],
+  action: {
+    actionId: "tool-call-1",
+    ownerRuntime: "praxis",
+    intentLabel: "shell command",
+    metadata: {},
+  },
+  command: {
+    argv: ["/usr/bin/printf", "hello"],
+    cwd: "/workspace/project",
+    env: {},
+    stdin: null,
+  },
+  enforcement: {
+    profile: "workspace-write-no-network",
+    filesystem: {
+      read: ["/workspace/project"],
+      write: ["/workspace/project/tmp"],
+    },
+    network: "deny",
+    process: {
+      spawn: true,
+    },
+    resources: {
+      timeoutMs: 1000,
+    },
+  },
+  fallback: {
+    mode: "none",
+  },
+};
+
+const prepared = await raxcell.prepareRun(request);
+if (!prepared.ok && prepared.policyDecision) {
+  // The runtime decides whether to deny, ask a user, rewrite policy, or grant.
+}
+
+const result = await raxcell.run(request);
+```
+
+See [raxcell/sdk/README.md](raxcell/sdk/README.md) for package-level API details.
+
+See [specs/raxcell/praxis-ts-middleware-integration.md](specs/raxcell/praxis-ts-middleware-integration.md) for the recommended Praxis middleware pattern.
+
+## Core Protocol Methods
+
+`probe`
+
+Checks whether the requested backend is available and what it can enforce.
+
+`explainBackend`
+
+Returns backend capability facts, operation schema, isolation primitives, runtime roots, and public-safe limitations.
+
+`resolveProfile`
+
+Resolves a policy pack profile into explicit enforcement declarations.
+
+`prepareRun`
+
+Dry-runs backend selection and lowering without spawning the command. This is the main middleware hook for policy engines.
+
+`run`
+
+Executes the command through the selected backend.
 
 ## Repository Layout
 
-- `raxcell/crates/protocol`: stable JSON protocol types shared by CLI, SDKs, and runtimes.
-- `raxcell/crates/core`: capability probe and execution backend dispatch.
-- `raxcell/crates/cli`: JSON CLI and stdio JSON-RPC worker.
-- `raxcell/sdk`: TypeScript facade package.
-- `raxcell/fixtures`: smoke-test JSON requests.
-- `specs/raxcell`: extraction specs and stage plans.
+- `raxcell/crates/protocol`: JSON protocol types.
+- `raxcell/crates/core`: backend dispatch, policy resolution, prepare/run logic.
+- `raxcell/crates/cli`: CLI and stdio JSON-RPC worker.
+- `raxcell/sdk`: TypeScript client package.
+- `raxcell/fixtures`: JSON smoke fixtures.
+- `specs/raxcell`: extraction plans and integration docs.
 
-## Verify
+## Verification
+
+Run the Rust tests:
 
 ```bash
 cargo test --manifest-path raxcell/Cargo.toml
+```
+
+Run the TypeScript SDK checks:
+
+```bash
 pnpm install
 pnpm build:sdk
 pnpm test:sdk
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.linux-bubblewrap.json
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.cwd-policy-required.json
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.cwd-policy-granted.json
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- prepare-run --stdin < raxcell/fixtures/prepare-run.linux-bubblewrap.json
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- explain-backend --stdin < raxcell/fixtures/explain-backend.linux-bubblewrap.json
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- resolve-profile --stdin < raxcell/fixtures/resolve.workspace.json
 ```
 
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+Run Linux smoke commands:
+
+```bash
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- probe --stdin < raxcell/fixtures/probe.auto.json
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- prepare-run --stdin < raxcell/fixtures/prepare-run.linux-bubblewrap.json
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.linux-bubblewrap.json
+cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- explain-backend --stdin < raxcell/fixtures/explain-backend.linux-bubblewrap.json
+```
+
+## Publishing
+
+The npm publish workflow lives at `.github/workflows/npm-publish.yml`.
+
+It publishes `raxcell/sdk` as `@praxis-ai/raxcell` when triggered by:
+
+- manual `workflow_dispatch`;
+- a published GitHub release;
+- a pushed `v*` tag.
+
+Configure the repository secret:
+
+```text
+NPM_TOKEN
+```
+
+The workflow runs Rust tests, TypeScript build, TypeScript tests, and then:
+
+```bash
+pnpm --dir raxcell/sdk publish --access public --no-git-checks --provenance
+```
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

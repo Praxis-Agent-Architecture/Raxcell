@@ -1,0 +1,350 @@
+# @praxis-ai/raxcell
+
+Raxcell is an execution-enforcement sandbox SDK for agent runtimes.
+
+This package is the TypeScript client facade. It calls a Raxcell CLI binary through JSON stdin/stdout and exposes typed protocol objects for Praxis or any other agent harness.
+
+Version: `0.1.0`
+
+## What This Package Is
+
+Raxcell is the sandbox backend layer below an agent runtime.
+
+It does:
+
+- backend capability probing;
+- backend explanation for UI/audit/control planes;
+- dry-run sandbox preparation;
+- policy-decision handoff;
+- sandboxed command execution;
+- filesystem lowering reports;
+- backend-specific artifacts such as Linux bubblewrap argv.
+
+It does not:
+
+- make approval decisions;
+- ask humans;
+- decide Praxis policy;
+- interpret model/tool intent;
+- rewrite prompts;
+- implement an agent loop.
+
+In Praxis terms:
+
+```text
+Praxis Agent / Harness
+  -> Praxis policy middleware
+  -> @praxis-ai/raxcell client
+  -> Raxcell CLI / worker
+  -> linux-bubblewrap now
+  -> macOS Seatbelt / Windows native later
+```
+
+## Current 0.1.0 Runtime Contract
+
+The package expects a Raxcell CLI binary path.
+
+```ts
+import { RaxcellClient } from "@praxis-ai/raxcell";
+
+const raxcell = new RaxcellClient({
+  binaryPath: "/absolute/path/to/raxcell",
+});
+```
+
+The current tarball ships the TypeScript client and protocol types. It does not yet bundle platform-specific native binaries. Praxis should pass the CLI path explicitly.
+
+## Core Methods
+
+### probe
+
+Use `probe()` when Praxis starts, or before selecting a backend.
+
+```ts
+const probe = await raxcell.probe({
+  kind: "raxcell.probe.v1",
+  platform: "auto",
+  backendPreference: ["linux-bubblewrap"],
+});
+
+if (!probe.ready) {
+  throw new Error(probe.publicSafeMessage);
+}
+```
+
+On Linux, a ready response means bubblewrap is available and Raxcell can enforce filesystem, network, process, and timeout boundaries.
+
+### explainBackend
+
+Use `explainBackend()` to populate a control plane, debug panel, audit log, or policy middleware cache.
+
+```ts
+const explanation = await raxcell.explainBackend({
+  kind: "raxcell.explainBackend.v1",
+  platform: "auto",
+  backendPreference: ["linux-bubblewrap"],
+});
+
+console.log(explanation.operations);
+console.log(explanation.explanation.isolationPrimitives);
+```
+
+Important operation flags:
+
+- `prepareRun` has `no-process-spawn`;
+- `run` has `spawns-process`;
+- `explainBackend` and `probe` are side-effect-free.
+
+### prepareRun
+
+Use `prepareRun()` before executing a command. This is the main policy middleware integration point.
+
+`prepareRun()` does not spawn the command. It asks Raxcell to lower the request into backend-specific sandbox facts.
+
+```ts
+const prepared = await raxcell.prepareRun(runRequest);
+
+if (prepared.policyDecision) {
+  // Praxis decides whether to grant, deny, ask a user, or rewrite the request.
+}
+
+if (prepared.ok) {
+  console.log(prepared.filesystemLowering);
+  console.log(prepared.backendArtifacts);
+}
+```
+
+On Linux, `prepared.backendArtifacts[0]` is a `linux-bubblewrap-argv` artifact containing the complete bubblewrap argv Raxcell would use.
+
+### run
+
+Use `run()` only after Praxis policy accepts the request.
+
+```ts
+const result = await raxcell.run(runRequest);
+
+if (!result.ok) {
+  console.error(result.denial);
+}
+```
+
+The result includes stdout, stderr, exit code, timeout state, denial, and `filesystemLowering`.
+
+## RunRequest Shape
+
+Praxis should generate one `RunRequest` per sandboxed command.
+
+```ts
+import type { RunRequest } from "@praxis-ai/raxcell";
+
+const runRequest: RunRequest = {
+  kind: "raxcell.run.v1",
+  backendPreference: ["linux-bubblewrap"],
+  policyGrants: [],
+  action: {
+    actionId: "tool-call-123",
+    ownerRuntime: "praxis",
+    intentLabel: "shell command",
+    metadata: {
+      toolId: "praxis.baseTool.shell.run",
+      sessionId: "session-1",
+    },
+  },
+  command: {
+    argv: ["/usr/bin/printf", "hello"],
+    cwd: "/workspace/project",
+    env: {},
+    stdin: null,
+  },
+  enforcement: {
+    profile: "workspace-write-no-network",
+    filesystem: {
+      read: ["/workspace/project"],
+      write: ["/workspace/project/tmp"],
+    },
+    network: "deny",
+    process: {
+      spawn: true,
+    },
+    resources: {
+      timeoutMs: 1000,
+    },
+  },
+  fallback: {
+    mode: "none",
+  },
+};
+```
+
+## Praxis Policy Middleware Pattern
+
+Recommended middleware flow:
+
+```ts
+import type {
+  PolicyGrant,
+  RunRequest,
+  RunResponse,
+} from "@praxis-ai/raxcell";
+
+type PraxisPolicyDecision =
+  | { type: "allow" }
+  | { type: "grant"; grants: PolicyGrant[] }
+  | { type: "deny"; reason: string };
+
+async function executeWithRaxcellPolicy(
+  raxcell: RaxcellClient,
+  request: RunRequest,
+  decide: (request: RunRequest) => Promise<PraxisPolicyDecision>,
+): Promise<RunResponse> {
+  const prepared = await raxcell.prepareRun(request);
+
+  if (prepared.policyDecision) {
+    const decision = await decide(request);
+    if (decision.type === "deny") {
+      throw new Error(decision.reason);
+    }
+    if (decision.type === "grant") {
+      request = {
+        ...request,
+        policyGrants: [
+          ...(request.policyGrants ?? []),
+          ...decision.grants,
+        ],
+      };
+    }
+  }
+
+  const preparedAfterGrants = await raxcell.prepareRun(request);
+  if (!preparedAfterGrants.ok) {
+    throw new Error(
+      preparedAfterGrants.denial?.message ??
+        "Raxcell prepareRun failed",
+    );
+  }
+
+  auditPreparedRun(preparedAfterGrants);
+  return raxcell.run(request);
+}
+
+function auditPreparedRun(prepared: Awaited<ReturnType<RaxcellClient["prepareRun"]>>) {
+  // Persist these in Praxis session/event/state storage.
+  console.log(prepared.filesystemLowering);
+  console.log(prepared.backendArtifacts);
+}
+```
+
+## Policy Decision Handoff
+
+If `command.cwd` is outside declared roots, Raxcell returns:
+
+```json
+{
+  "ok": false,
+  "denial": {
+    "code": "POLICY_DECISION_REQUIRED"
+  },
+  "policyDecision": {
+    "reason": "cwd-outside-declared-roots",
+    "path": "/workspace/project",
+    "required": ["filesystem.read"],
+    "publicSafeMessage": "command cwd is outside declared filesystem roots; upper policy decision required"
+  }
+}
+```
+
+Praxis can grant:
+
+```ts
+const grant: PolicyGrant = {
+  reason: "cwd-outside-declared-roots",
+  path: "/workspace/project",
+  access: ["read"],
+  grantedBy: "praxis-policy",
+};
+```
+
+Then retry `prepareRun()` or call `run()` with the updated request.
+
+## What To Audit In Praxis
+
+Persist these fields for every command:
+
+- `RunRequest.action.actionId`
+- `RunRequest.action.ownerRuntime`
+- `PrepareRunResponse.filesystemLowering`
+- `PrepareRunResponse.backendArtifacts`
+- `PrepareRunResponse.policyDecision`
+- `RunResponse.denial`
+- `RunResponse.exitCode`
+- `RunResponse.timedOut`
+
+For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual bubblewrap argv:
+
+```ts
+const bwrap = prepared.backendArtifacts.find(
+  (artifact) => artifact.format === "linux-bubblewrap-argv",
+);
+
+console.log(bwrap?.data.executable);
+console.log(bwrap?.arguments);
+```
+
+## Linux Status
+
+Linux is usable in `0.1.0`:
+
+- `probe` detects `linux-bubblewrap`;
+- `prepareRun` returns filesystem lowering and bubblewrap argv;
+- `run` executes through bubblewrap;
+- missing declared roots fail closed;
+- cwd outside declared roots returns `POLICY_DECISION_REQUIRED`;
+- explicit `policyGrants` can authorize cwd;
+- network deny uses bubblewrap network unshare;
+- timeout is enforced by Raxcell process management.
+
+## WSL Status
+
+WSL2 should follow the Linux path conceptually because it uses Linux userspace. Treat it as Linux-bubblewrap once the host has a working `bwrap`.
+
+## macOS And Windows Status
+
+The protocol already exposes backend families:
+
+- `macos-seatbelt`
+- `windows-elevated`
+- `windows-unelevated`
+
+Raxcell has internal native lowering models for macOS Seatbelt and Windows token/ACL/WFP planning, but `0.1.0` does not bundle or enable native platform runners yet.
+
+On unsupported hosts, those backends fail closed.
+
+## Installation From Local Tarball
+
+After building the tarball:
+
+```bash
+pnpm add /path/to/praxis-ai-raxcell-0.1.0.tgz
+```
+
+Then import:
+
+```ts
+import {
+  RaxcellClient,
+  type RunRequest,
+  type PrepareRunResponse,
+} from "@praxis-ai/raxcell";
+```
+
+## Version Notes
+
+`0.1.0` is a Linux-first integration package. The API is intentionally small:
+
+- `probe`
+- `explainBackend`
+- `resolveProfile`
+- `prepareRun`
+- `run`
+
+The key Praxis integration point is `prepareRun`.

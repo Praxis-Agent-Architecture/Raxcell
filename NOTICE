@@ -1,6 +1,10 @@
-OpenAI Codex
-Copyright 2025 OpenAI
+Raxcell
 
-This project includes code derived from [Ratatui](https://github.com/ratatui/ratatui), licensed under the MIT license.
-Copyright (c) 2016-2022 Florian Dehau
-Copyright (c) 2023-2025 The Ratatui Developers
+This project began as a fork of OpenAI Codex and retains concepts and implementation lessons from its sandboxing work.
+
+Portions of the repository may be derived from or informed by OpenAI Codex, licensed under Apache-2.0.
+
+OpenAI Codex
+Copyright 2025 OpenAI
+
+Raxcell is not affiliated with or endorsed by OpenAI.
