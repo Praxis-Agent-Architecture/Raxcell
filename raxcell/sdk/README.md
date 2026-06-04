@@ -386,6 +386,7 @@ Native planned artifact formats:
   - `arguments`: planned `/usr/bin/sandbox-exec -p <profile> -- <argv...>`.
   - `data.profile`: generated SBPL profile text.
   - `data.commandEnvMode`: `clean`.
+  - `data.writeGrantMaterialization`: `raxcell-precreate`; Raxcell precreates missing approved writable grant paths before launching Seatbelt.
   - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
   - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
   - `data.runtimeRoots`: backend-runtime read roots added so Seatbelt can execute system tools and libraries; these are not upper-runtime policy grants.

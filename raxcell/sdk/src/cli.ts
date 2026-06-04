@@ -913,6 +913,7 @@ function plannedMacosSeatbeltArtifact(
       selectedOn: process.platform,
       profile,
       commandEnvMode: "clean",
+      writeGrantMaterialization: "raxcell-precreate",
       commandEnv: buildSandboxCommandEnv(request.command.env),
       readRoots: loweredRootPaths(filesystemLowering, "read"),
       writeRoots: loweredRootPaths(filesystemLowering, "write"),

@@ -1044,6 +1044,7 @@ test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () 
     assert.equal(response.environmentGap?.reason, "host-platform-mismatch");
     assert.equal(artifact.format, "macos-seatbelt-sbpl-profile");
     assert.equal(artifact.arguments[0], "/usr/bin/sandbox-exec");
+    assert.equal(artifact.data.writeGrantMaterialization, "raxcell-precreate");
     assert.match(String(artifact.data.profile), /\(deny default\)/);
     assert.match(String(artifact.data.profile), /\(deny network\*\)/);
     assert.match(String(artifact.data.profile), /\(allow file-read\* \(literal "\/usr"\) \(subpath "\/usr"\)\)/);
