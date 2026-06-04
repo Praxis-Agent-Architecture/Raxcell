@@ -30,12 +30,12 @@ macOS and Windows are protocol-visible native backend families:
 - `windows-unelevated`
 - `windows-native`
 
-The `0.1.x` npm CLI executes Linux bubblewrap on Linux and macOS Seatbelt on macOS. Windows preferences are useful for `probe`, `explain-backend`, and fail-closed `prepare-run` responses: they return native capability facts, planned lowering artifacts, and environment gaps without pretending a Windows runner is attached.
+The `0.1.x` npm CLI executes Linux bubblewrap on Linux and macOS Seatbelt on macOS. Windows execution is delegated to a native runner contract: on Windows, Raxcell looks for `RAXCELL_WINDOWS_RUNNER` or `raxcell-windows-runner`; without that runner it returns native capability facts, planned lowering artifacts, and fail-closed environment gaps.
 
 Native planned artifacts are backend-specific:
 
 - `macos-seatbelt-sbpl-profile`: planned `/usr/bin/sandbox-exec` invocation, generated SBPL profile text, read/write roots, network deny state, and analyzer effects.
-- `windows-native-token-acl-plan`: planned token mode, ACL roots, network block state, process/resource limits, and analyzer effects.
+- `windows-native-token-acl-plan`: planned runner protocol, token mode, ACL roots, network block state, process/resource limits, and analyzer effects.
 
 ## Boundary
 

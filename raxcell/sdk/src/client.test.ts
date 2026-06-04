@@ -140,7 +140,7 @@ test("explain-backend exposes native primitives without claiming execution readi
   assert.equal(response.selectedBackend, "windows-native");
   assert.equal(response.probe.ready, false);
   assert.ok(response.explanation.isolationPrimitives.includes("windows-restricted-token"));
-  assert.match(response.explanation.limits.join("\n"), /no attached runner/);
+  assert.match(response.explanation.limits.join("\n"), /Windows native sandboxing executes through/);
 });
 
 test("client dispatches prepare-run and run through stdin JSON", async () => {
@@ -737,6 +737,7 @@ test("prepare-run for unattached native backend returns environment facts and pl
     assert.ok(response.filesystemLowering?.effects?.some((effect) => effect.rawToken === "created.txt"));
     assert.equal(response.backendArtifacts[0].format, "windows-native-token-acl-plan");
     assert.equal(response.backendArtifacts[0].data.attached, false);
+    assert.equal(response.backendArtifacts[0].data.runnerProtocol, "raxcell.windowsRunner.run.v1");
     assert.equal(response.backendArtifacts[0].data.tokenMode, "writable-roots-capability");
     assert.equal(response.backendArtifacts[0].data.networkBlocked, true);
     assert.deepEqual(response.backendArtifacts[0].data.aclRoots, [

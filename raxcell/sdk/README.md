@@ -58,7 +58,7 @@ For development against this repository, Praxis can point directly at the build 
 RAXCELL_BIN=/home/proview/Desktop/Praxis_series/development/Raxcell/raxcell/sdk/dist/cli.js
 ```
 
-The current package ships a TypeScript/Node CLI with Linux bubblewrap and macOS Seatbelt runners. Windows native backends are protocol-visible through `probe`, `explain-backend`, and fail-closed `prepare-run` responses, but they do not yet have attached native runners.
+The current package ships a TypeScript/Node CLI with Linux bubblewrap and macOS Seatbelt runners. Windows native execution is delegated to a native runner contract: set `RAXCELL_WINDOWS_RUNNER` or expose `raxcell-windows-runner` on `PATH`.
 
 ## Core Methods
 
@@ -371,9 +371,9 @@ The protocol already exposes backend families:
 - `windows-elevated`
 - `windows-unelevated`
 
-Raxcell can execute `macos-seatbelt` on macOS hosts when `/usr/bin/sandbox-exec` is available. Windows native runners remain future backend work.
+Raxcell can execute `macos-seatbelt` on macOS hosts when `/usr/bin/sandbox-exec` is available. Windows native execution requires a runner binary that enforces restricted token, ACL roots, Job Object limits, and network controls.
 
-When selected through `backendPreference`, Windows backends return native capability facts and planned lowering artifacts, then fail closed with `environmentGap.reason = "host-platform-mismatch"` or `environmentGap.reason = "native-backend-runner-unattached"`. They do not ask for approval, grant policy, or fall back to host execution.
+When selected through `backendPreference`, Windows backends return native capability facts and planned lowering artifacts. They fail closed with `environmentGap.reason = "host-platform-mismatch"` on non-Windows hosts, or `environmentGap.reason = "native-backend-runner-unattached"` on Windows hosts without a runner. They do not ask for approval, grant policy, or fall back to host execution.
 
 Native planned artifact formats:
 
@@ -383,10 +383,29 @@ Native planned artifact formats:
   - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
   - `data.networkDenied`: backend network intent.
 - `windows-native-token-acl-plan`
+  - `data.runnerProtocol`: `raxcell.windowsRunner.run.v1`.
+  - `data.runner`: resolved runner path, when available.
   - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
   - `data.aclRoots`: planned filesystem ACL roots.
   - `data.networkBlocked`: WFP/network intent.
   - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
+
+The Windows runner receives a JSON object on stdin:
+
+```json
+{
+  "kind": "raxcell.windowsRunner.run.v1",
+  "backend": "windows-native",
+  "command": {},
+  "enforcement": {},
+  "filesystemLowering": {},
+  "tokenMode": "writable-roots-capability",
+  "aclRoots": [],
+  "networkBlocked": true
+}
+```
+
+It must return `raxcell.runResult.v1` JSON on stdout and keep human/debug output on stderr.
 
 ## Installation From Local Tarball
 

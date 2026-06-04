@@ -33,6 +33,7 @@ type PreparedBackendRun = {
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
+  stdin?: string | null;
 };
 
 type AllowedRoot = {
@@ -237,6 +238,9 @@ function probeBackend(preference: BackendFamily[] = []): ProbeResponse {
   if (selectedBackend === "macos-seatbelt") {
     return probeMacosSeatbelt();
   }
+  if (isWindowsNativeBackend(selectedBackend)) {
+    return probeWindowsNative(selectedBackend);
+  }
   return probeUnattachedNativeBackend(selectedBackend);
 }
 
@@ -334,6 +338,46 @@ function probeMacosSeatbelt(): ProbeResponse {
   };
 }
 
+function probeWindowsNative(backend: BackendFamily): ProbeResponse {
+  const isWindows = process.platform === "win32";
+  const runner = windowsNativeRunnerPath();
+  const ready = isWindows && runner !== null;
+  const missing: string[] = [];
+  const nextActions: string[] = [];
+
+  if (!isWindows) {
+    missing.push("win32");
+    nextActions.push("Route this request to a win32 host or select a backend available on this host.");
+  }
+  if (isWindows && !runner) {
+    missing.push(nativeRunnerDependency(backend));
+    nextActions.push("Install a Windows native Raxcell runner or set RAXCELL_WINDOWS_RUNNER.");
+  }
+
+  return {
+    kind: "raxcell.probeResult.v1",
+    ready,
+    selectedBackend: backend,
+    supports: {
+      filesystem: ready ? "partial" : "unknown",
+      network: ready ? "partial" : "unknown",
+      process: ready ? "partial" : "unknown",
+      timeout: "partial",
+    },
+    limits: [
+      "Windows native execution is delegated to a Raxcell Windows runner over JSON stdin/stdout.",
+      "The runner must enforce restricted token, ACL roots, Job Object, and network controls.",
+      "Raxcell reports policy gaps but does not approve them.",
+    ],
+    weaknesses: [],
+    missing,
+    nextActions,
+    publicSafeMessage: ready
+      ? `${backend} runner is ready`
+      : `${backend} runner is not ready on this host`,
+  };
+}
+
 function probeUnattachedNativeBackend(backend: BackendFamily): ProbeResponse {
   const hostPlatform = hostPlatformForBackend(backend);
   const hostMatches = process.platform === hostPlatform;
@@ -403,9 +447,7 @@ function explainBackend(
     };
   }
   if (
-    backend === "windows-native" ||
-    backend === "windows-elevated" ||
-    backend === "windows-unelevated"
+    isWindowsNativeBackend(backend)
   ) {
     return {
       backend,
@@ -418,8 +460,8 @@ function explainBackend(
       ],
       runtimeRoots: [],
       limits: [
-        "Windows native sandboxing is protocol-visible but the 0.1.x npm CLI has no attached runner.",
-        "Raxcell will fail closed until native token/ACL/WFP execution is attached.",
+        "Windows native sandboxing executes through a Raxcell Windows runner when attached.",
+        "Raxcell fails closed on non-Windows hosts or when the runner is unavailable.",
       ],
       publicSafeMessage: probe.publicSafeMessage,
     };
@@ -441,6 +483,9 @@ function prepareRun(request: RunRequest): PreparedBackendRun {
   }
   if (backend === "macos-seatbelt") {
     return prepareMacosSeatbelt(request);
+  }
+  if (isWindowsNativeBackend(backend)) {
+    return prepareWindowsNative(request, backend);
   }
   return prepareUnattachedNative(request, backend);
 }
@@ -705,6 +750,128 @@ function prepareUnattachedNative(
   };
 }
 
+function prepareWindowsNative(
+  request: RunRequest,
+  backend: BackendFamily,
+): PreparedBackendRun {
+  const capabilityReport = probeWindowsNative(backend);
+  const runner = windowsNativeRunnerPath();
+  const filesystemLowering = lowerFilesystem(request, backend);
+  const plannedArtifact = plannedWindowsNativeArtifact(backend, request, filesystemLowering);
+
+  if (!capabilityReport.ready || !runner) {
+    const gap = nativeBackendEnvironmentGap(backend);
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: denial("BACKEND_UNAVAILABLE", gap.publicSafeMessage),
+        policyDecision: null,
+        environmentGap: gap,
+        filesystemLowering,
+        backendArtifacts: [plannedArtifact],
+        capabilityReport,
+      },
+      executable: null,
+      args: [],
+    };
+  }
+
+  const cwdDecision = cwdPolicyDecision(request, filesystemLowering.policyGrants);
+  if (cwdDecision) {
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: null,
+        policyDecision: cwdDecision,
+        environmentGap: null,
+        filesystemLowering,
+        backendArtifacts: [plannedArtifact],
+        capabilityReport,
+      },
+      executable: runner,
+      args: [],
+    };
+  }
+
+  const environmentGap = dynamicPathEnvironmentGap(request);
+  if (environmentGap) {
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: null,
+        policyDecision: null,
+        environmentGap,
+        filesystemLowering,
+        backendArtifacts: [plannedArtifact],
+        capabilityReport,
+      },
+      executable: runner,
+      args: [],
+    };
+  }
+
+  const pathDecision = argvPathPolicyDecision(request, filesystemLowering.policyGrants);
+  if (pathDecision) {
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: null,
+        policyDecision: pathDecision,
+        environmentGap: null,
+        filesystemLowering,
+        backendArtifacts: [plannedArtifact],
+        capabilityReport,
+      },
+      executable: runner,
+      args: [],
+    };
+  }
+
+  const runnerRequest = windowsRunnerRequest(
+    request,
+    backend,
+    filesystemLowering,
+  );
+  const backendArtifacts = [
+    {
+      ...plannedArtifact,
+      arguments: [runner, "run"],
+      data: {
+        ...plannedArtifact.data,
+        attached: true,
+        runner,
+        runnerProtocol: "raxcell.windowsRunner.run.v1",
+      },
+      warnings: [],
+    },
+  ];
+
+  return {
+    response: {
+      kind: "raxcell.prepareRunResult.v1",
+      ok: true,
+      backend,
+      denial: null,
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering,
+      backendArtifacts,
+      capabilityReport,
+    },
+    executable: runner,
+    args: ["run"],
+    stdin: JSON.stringify(runnerRequest),
+  };
+}
+
 function plannedNativeArtifact(
   backend: BackendFamily,
   request: RunRequest,
@@ -787,6 +954,8 @@ function plannedWindowsNativeArtifact(
       attached: false,
       hostPlatform: "win32",
       selectedOn: process.platform,
+      runner: windowsNativeRunnerPath(),
+      runnerProtocol: "raxcell.windowsRunner.run.v1",
       tokenMode: aclRoots.some((root) => root.access === "write")
         ? "writable-roots-capability"
         : "read-only-capability",
@@ -814,6 +983,44 @@ function nativeRunnerWarning(backend: BackendFamily): { code: string; message: s
     code: "NATIVE_BACKEND_RUNNER_UNATTACHED",
     message: `${backend} is protocol-visible but not executable in the 0.1.x npm CLI.`,
   };
+}
+
+function windowsRunnerRequest(
+  request: RunRequest,
+  backend: BackendFamily,
+  filesystemLowering: FileSystemLoweringReport,
+): Record<string, unknown> {
+  return {
+    kind: "raxcell.windowsRunner.run.v1",
+    backend,
+    command: request.command,
+    enforcement: request.enforcement,
+    action: request.action,
+    filesystemLowering,
+    tokenMode: plannedWindowsTokenMode(filesystemLowering),
+    aclRoots: plannedWindowsAclRoots(filesystemLowering),
+    networkBlocked: request.enforcement.network === "deny",
+  };
+}
+
+function plannedWindowsTokenMode(
+  filesystemLowering: FileSystemLoweringReport,
+): string {
+  return plannedWindowsAclRoots(filesystemLowering).some((root) => root.access === "write")
+    ? "writable-roots-capability"
+    : "read-only-capability";
+}
+
+function plannedWindowsAclRoots(
+  filesystemLowering: FileSystemLoweringReport,
+): Array<{ path: string; access: string; source: string }> {
+  return filesystemLowering.declaredRoots
+    .filter((root) => root.access === "read" || root.access === "write")
+    .map((root) => ({
+      path: root.path,
+      access: root.access,
+      source: root.source,
+    }));
 }
 
 function sbplString(value: string): string {
@@ -904,6 +1111,22 @@ function nativeRunnerDependency(backend: BackendFamily): string {
   return "windows-native-runner";
 }
 
+function windowsNativeRunnerPath(): string | null {
+  const configured = process.env.RAXCELL_WINDOWS_RUNNER;
+  if (configured) {
+    return existsSync(configured) ? configured : null;
+  }
+  return findExecutable("raxcell-windows-runner");
+}
+
+function isWindowsNativeBackend(backend: BackendFamily | null): backend is BackendFamily {
+  return (
+    backend === "windows-native" ||
+    backend === "windows-elevated" ||
+    backend === "windows-unelevated"
+  );
+}
+
 function spawnPreparedCommand(
   request: RunRequest,
   prepared: PreparedBackendRun,
@@ -978,7 +1201,7 @@ function spawnPreparedCommand(
         stderr += String(error);
       }
     });
-    child.stdin.end(request.command.stdin ?? "");
+    child.stdin.end(prepared.stdin ?? request.command.stdin ?? "");
   });
 }
 
