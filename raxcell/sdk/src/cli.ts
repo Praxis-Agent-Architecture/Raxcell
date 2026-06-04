@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -33,6 +33,11 @@ type AllowedRoot = {
   path: string;
   access: "read" | "write";
   source: "declared" | "policy-grant";
+};
+
+type PathReference = {
+  path: string;
+  access: "read" | "write";
 };
 
 const VERSION = readPackageVersion();
@@ -364,6 +369,27 @@ async function runLinux(request: RunRequest): Promise<RunResponse> {
     };
   }
 
+  const materializationDenial = materializeWriteGrantMounts(
+    prepared.response.filesystemLowering!,
+  );
+  if (materializationDenial) {
+    return {
+      kind: "raxcell.runResult.v1",
+      ok: false,
+      backend: prepared.response.backend,
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      denial: materializationDenial,
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering: prepared.response.filesystemLowering,
+      fallback: null,
+      capabilityReport: prepared.response.capabilityReport,
+    };
+  }
+
   return spawnBubblewrap(request, prepared);
 }
 
@@ -477,7 +503,7 @@ function buildBwrapArgs(
   }
 
   for (const root of filesystemLowering.declaredRoots) {
-    if (!existsSync(root.path)) {
+    if (!existsSync(root.path) && !isMaterializableWriteGrant(root)) {
       continue;
     }
     args.push(...parentDirArgs(root.path));
@@ -521,6 +547,29 @@ function lowerFilesystem(request: RunRequest): FileSystemLoweringReport {
     policyGrants,
     warnings: [],
   };
+}
+
+function materializeWriteGrantMounts(
+  filesystemLowering: FileSystemLoweringReport,
+): Denial | null {
+  for (const root of filesystemLowering.declaredRoots) {
+    if (!isMaterializableWriteGrant(root) || existsSync(root.path)) {
+      continue;
+    }
+    try {
+      closeSync(openSync(root.path, "a"));
+    } catch (error) {
+      return denial(
+        "WRITE_GRANT_MATERIALIZATION_FAILED",
+        `Failed to create writable policy-grant mount source ${root.path}: ${String(error)}`,
+      );
+    }
+  }
+  return null;
+}
+
+function isMaterializableWriteGrant(root: LoweredRoot): boolean {
+  return root.source === "policy-grant" && root.access === "write";
 }
 
 function runtimeLoweredRoots(): LoweredRoot[] {
@@ -571,18 +620,31 @@ function argvPathPolicyDecision(
 ): PolicyDecisionRequired | null {
   const roots = allowedRoots(request, policyGrants);
   const cwd = normalizeAbsolute(request.command.cwd);
+  const requirements = new Map<string, Set<"read" | "write">>();
   for (const token of request.command.argv.slice(1)) {
-    for (const candidate of pathsInToken(token, cwd)) {
-      if (isRuntimePath(candidate)) {
+    for (const reference of pathReferencesInToken(token, cwd)) {
+      if (isRuntimePath(reference.path)) {
         continue;
       }
-      if (isAllowedPath(candidate, roots, "read")) {
-        continue;
-      }
+      const existing = requirements.get(reference.path) ?? new Set<"read" | "write">();
+      existing.add(reference.access);
+      requirements.set(reference.path, existing);
+    }
+  }
+
+  for (const [path, accessSet] of requirements) {
+    const missing: Array<"read" | "write"> = [];
+    if (accessSet.has("read") && !isAllowedPath(path, roots, "read")) {
+      missing.push("read");
+    }
+    if (accessSet.has("write") && !isAllowedPath(path, roots, "write")) {
+      missing.push("write");
+    }
+    if (missing.length > 0) {
       return {
         reason: "path-outside-declared-roots",
-        path: candidate,
-        required: ["read"],
+        path,
+        required: missing,
         publicSafeMessage: "The command references a path outside declared filesystem roots.",
       };
     }
@@ -590,19 +652,65 @@ function argvPathPolicyDecision(
   return null;
 }
 
-function pathsInToken(token: string, cwd: string): string[] {
-  if (isAbsolute(token)) {
-    return [normalizeAbsolute(token)];
-  }
-  const candidates = new Set<string>();
+function pathReferencesInToken(token: string, cwd: string): PathReference[] {
+  const references = new Map<string, Set<"read" | "write">>();
   for (const shellToken of shellPathTokens(token)) {
-    if (isAbsolute(shellToken)) {
-      candidates.add(normalizeAbsolute(shellToken));
-    } else if (shellToken.includes("/")) {
-      candidates.add(resolve(cwd, shellToken));
+    const path = normalizeShellPath(shellToken, cwd);
+    if (!path) {
+      continue;
+    }
+    const accessSet = references.get(path) ?? new Set<"read" | "write">();
+    accessSet.add("read");
+    references.set(path, accessSet);
+  }
+
+  for (const shellToken of shellWritePathTokens(token)) {
+    const path = normalizeShellPath(shellToken, cwd);
+    if (!path) {
+      continue;
+    }
+    const accessSet = references.get(path) ?? new Set<"read" | "write">();
+    accessSet.add("write");
+    references.set(path, accessSet);
+  }
+
+  if (token.includes("write_text(")) {
+    for (const [path, accessSet] of references) {
+      accessSet.add("write");
+      references.set(path, accessSet);
     }
   }
-  return [...candidates];
+
+  const output: PathReference[] = [];
+  for (const [path, accessSet] of references) {
+    for (const access of accessSet) {
+      output.push({ path, access });
+    }
+  }
+  return output;
+}
+
+function normalizeShellPath(token: string, cwd: string): string | null {
+  if (isAbsolute(token)) {
+    return normalizeAbsolute(token);
+  }
+  if (token.includes("/")) {
+    return resolve(cwd, token);
+  }
+  return null;
+}
+
+function shellWritePathTokens(token: string): string[] {
+  const output: string[] = [];
+  for (const match of token.matchAll(
+    /(?:^|[\s])(?:\d*>>?|\d*<>)\s*(?:"([^"]+)"|'([^']+)'|([^\s"'`<>|;&()]+))/g,
+  )) {
+    const path = match[1] ?? match[2] ?? match[3];
+    if (path) {
+      output.push(path);
+    }
+  }
+  return output;
 }
 
 function shellPathTokens(token: string): string[] {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- Classified shell redirection and Python `write_text(...)` absolute path references as write requirements during `prepare-run`.
+- Kept read-only policy grants from lowering into writable sandbox shadow paths for external absolute writes.
+- Materialized missing host files for writable policy-grant mounts before running bubblewrap, so approved writes land on the host path.
+
 ## 0.1.3
 
 - Clarified `run.ok` semantics: a successfully launched sandbox returns `ok: true` even when the command exits nonzero.

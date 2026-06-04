@@ -1,4 +1,4 @@
-# Praxis TypeScript Middleware Integration For Raxcell 0.1.3
+# Praxis TypeScript Middleware Integration For Raxcell 0.1.4
 
 ## Purpose
 
@@ -13,13 +13,13 @@ The first production target should be Linux. WSL can reuse the Linux path. macOS
 Install in Praxis:
 
 ```bash
-pnpm add @praxis-ai/raxcell@0.1.3
+pnpm add @praxis-ai/raxcell@0.1.4
 ```
 
 Published package:
 
 ```text
-@praxis-ai/raxcell@0.1.3
+@praxis-ai/raxcell@0.1.4
 ```
 
 Runtime entrypoint:
@@ -28,7 +28,7 @@ Runtime entrypoint:
 import { RaxcellClient } from "@praxis-ai/raxcell";
 ```
 
-`0.1.3` contains the TypeScript client, protocol types, and a `raxcell` Node CLI with a Linux bubblewrap runner. Praxis can set `RAXCELL_BIN` to the installed `raxcell` bin or to a development build artifact such as `raxcell/sdk/dist/cli.js`.
+`0.1.4` contains the TypeScript client, protocol types, and a `raxcell` Node CLI with a Linux bubblewrap runner. Praxis can set `RAXCELL_BIN` to the installed `raxcell` bin or to a development build artifact such as `raxcell/sdk/dist/cli.js`.
 
 ## Integration Model
 
@@ -116,7 +116,7 @@ export function createRaxcellSandboxPort(input: {
 
 ## CLI Binary Path Strategy
 
-For `0.1.3`, Praxis should resolve the CLI path from runtime config.
+For `0.1.4`, Praxis should resolve the CLI path from runtime config.
 
 Recommended config:
 
@@ -576,7 +576,7 @@ test("praxis middleware prepares, grants cwd, and runs", async () => {
 
 Recommended smallest useful landing sequence:
 
-1. Add `@praxis-ai/raxcell@0.1.3` to Praxis.
+1. Add `@praxis-ai/raxcell@0.1.4` to Praxis.
 2. Add `SandboxExecutionPort`.
 3. Add `RaxcellClient` adapter with explicit `binaryPath`.
 4. Add shell/tool-call to `RunRequest` mapper.

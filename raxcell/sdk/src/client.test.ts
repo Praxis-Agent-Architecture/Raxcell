@@ -19,6 +19,7 @@ import type {
 const testDir = dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = resolve(testDir, "../package.json");
 const cliPath = resolve(testDir, "cli.js");
+const hasBwrap = spawnSync("which", ["bwrap"]).status === 0;
 
 test("package exposes the raxcell executable", () => {
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
@@ -278,6 +279,170 @@ test("prepare-run reports policy grants as lowered policy-grant roots", () => {
     rmSync(fakeBinDir, { recursive: true, force: true });
   }
 });
+
+test("prepare-run classifies external shell redirection as write gap", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-write-gap-workspace-"));
+  const externalRoot = mkdtempSync(join(tmpdir(), "raxcell-write-gap-external-"));
+  const externalFile = join(externalRoot, "helloRax.txt");
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexit 0\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    command: {
+      argv: ["/bin/sh", "-lc", `printf hello > ${externalFile}`],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, false);
+    assert.ok(response.policyDecision);
+    assert.equal(response.policyDecision.path, externalFile);
+    assert.ok(Array.isArray(response.policyDecision.required));
+    assert.ok(response.policyDecision.required.includes("write"));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test("prepare-run rejects external writes with only a read policy grant", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-read-grant-workspace-"));
+  const externalRoot = mkdtempSync(join(tmpdir(), "raxcell-read-grant-external-"));
+  const externalFile = join(externalRoot, "helloRax.txt");
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexit 0\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    policyGrants: [
+      {
+        reason: "human-approved-read",
+        path: externalFile,
+        access: ["read"],
+        grantedBy: "praxis-policy",
+      },
+    ],
+    command: {
+      argv: ["/bin/sh", "-lc", `printf hello > ${externalFile}`],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, false);
+    assert.equal(response.policyDecision?.path, externalFile);
+    assert.deepEqual(response.policyDecision?.required, ["write"]);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test(
+  "run with write grant writes external absolute path to the host",
+  { skip: !hasBwrap },
+  () => {
+    const workspace = mkdtempSync(join(tmpdir(), "raxcell-host-write-workspace-"));
+    const externalRoot = mkdtempSync(join(tmpdir(), "raxcell-host-write-external-"));
+    const externalFile = join(externalRoot, "helloRax.txt");
+    const request: RunRequest = {
+      ...sampleRunRequest(),
+      policyGrants: [
+        {
+          reason: "human-approved-write",
+          path: externalFile,
+          access: ["write"],
+          grantedBy: "praxis-policy",
+        },
+      ],
+      command: {
+        argv: [
+          "/bin/sh",
+          "-lc",
+          [
+            `printf '%s\\n' 'helloRax!I love raxode!' > ${externalFile}`,
+            `cat ${externalFile}`,
+            "python3 - <<'PY'",
+            "from pathlib import Path",
+            `p = Path('${externalFile}')`,
+            "s = p.read_text()",
+            "p.write_text(s.replace('raxode', 'praxis'))",
+            "PY",
+          ].join("\n"),
+        ],
+        cwd: workspace,
+        env: {},
+        stdin: null,
+      },
+      enforcement: {
+        ...sampleRunRequest().enforcement,
+        filesystem: {
+          read: [workspace],
+          write: [workspace],
+        },
+      },
+    };
+
+    try {
+      const result = spawnSync(cliPath, ["run"], {
+        encoding: "utf8",
+        input: JSON.stringify(request),
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const response = JSON.parse(result.stdout) as RunResponse;
+      assert.equal(response.ok, true);
+      assert.equal(response.exitCode, 0);
+      assert.match(readFileSync(externalFile, "utf8"), /praxis/);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+      rmSync(externalRoot, { recursive: true, force: true });
+    }
+  },
+);
 
 test("probe request type accepts all first-class backend families", () => {
   const request: ProbeRequest = {
