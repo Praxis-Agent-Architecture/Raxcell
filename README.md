@@ -232,23 +232,6 @@ pnpm test:sdk
 raxcell/sdk/dist/cli.js --version
 raxcell/sdk/dist/cli.js probe
 raxcell/sdk/dist/cli.js explain-backend
-npm --prefix raxcell/sdk pack --dry-run --json
-```
-
-## Publishing
-
-The npm publish workflow lives at `.github/workflows/npm-publish.yml`.
-
-It publishes `raxcell/sdk` as `@praxis-ai/raxcell` when triggered by:
-
-- manual `workflow_dispatch`;
-- a published GitHub release;
-- a pushed `v*` tag.
-
-Publishing requires the repository secret:
-
-```text
-NPM_TOKEN
 ```
 
 ## License
