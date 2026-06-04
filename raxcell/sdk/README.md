@@ -337,8 +337,9 @@ Persist these fields for every command:
 - `RunResponse.denial`
 - `RunResponse.exitCode`
 - `RunResponse.timedOut`
+- `RunResponse.backendArtifacts`
 
-For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual bubblewrap argv:
+For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual bubblewrap argv. `prepareRun` and `run` both expose the prepared artifacts so audit and TUI rendering can use the same facts before and after execution:
 
 ```ts
 const bwrap = prepared.backendArtifacts.find(
@@ -426,7 +427,7 @@ The npm package exports this stdin shape as `WindowsRunnerRunRequest`; runner im
 ```
 
 It must return `raxcell.runResult.v1` JSON on stdout and keep human/debug output on stderr.
-The returned `backend` must match the prepared Windows backend. Raxcell rejects mismatched runner responses as protocol errors. If the runner omits `filesystemLowering` or `capabilityReport`, Raxcell overlays the prepared execution facts before returning the final `raxcell.runResult.v1` to Praxis.
+The returned `backend` must match the prepared Windows backend. Raxcell rejects mismatched runner responses as protocol errors. If the runner omits `filesystemLowering`, `backendArtifacts`, or `capabilityReport`, Raxcell overlays the prepared execution facts before returning the final `raxcell.runResult.v1` to Praxis.
 
 ## Installation From Local Tarball
 

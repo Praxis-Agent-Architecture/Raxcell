@@ -1095,6 +1095,7 @@ async function runBackend(request: RunRequest): Promise<RunResponse> {
       policyDecision: prepared.response.policyDecision,
       environmentGap: prepared.response.environmentGap,
       filesystemLowering: prepared.response.filesystemLowering,
+      backendArtifacts: prepared.response.backendArtifacts,
       fallback: null,
       capabilityReport: prepared.response.capabilityReport,
     };
@@ -1117,6 +1118,7 @@ async function runBackend(request: RunRequest): Promise<RunResponse> {
         policyDecision: null,
         environmentGap: null,
         filesystemLowering: prepared.response.filesystemLowering,
+        backendArtifacts: prepared.response.backendArtifacts,
         fallback: null,
         capabilityReport: prepared.response.capabilityReport,
       };
@@ -1218,6 +1220,7 @@ function spawnPreparedCommand(
         policyDecision: null,
         environmentGap: null,
         filesystemLowering: prepared.response.filesystemLowering,
+        backendArtifacts: prepared.response.backendArtifacts,
         fallback: null,
         capabilityReport: prepared.response.capabilityReport,
       });
@@ -1248,6 +1251,7 @@ function spawnPreparedCommand(
         policyDecision: null,
         environmentGap: null,
         filesystemLowering: prepared.response.filesystemLowering,
+        backendArtifacts: prepared.response.backendArtifacts,
         fallback: null,
         capabilityReport: prepared.response.capabilityReport,
       });
@@ -1289,6 +1293,7 @@ function parsePreparedRunResultJson(input: {
       policyDecision: null,
       environmentGap: null,
       filesystemLowering: input.prepared.response.filesystemLowering,
+      backendArtifacts: input.prepared.response.backendArtifacts,
       fallback: null,
       capabilityReport: input.prepared.response.capabilityReport,
     };
@@ -1299,6 +1304,7 @@ function parsePreparedRunResultJson(input: {
       backend: input.prepared.response.backend,
       filesystemLowering: input.prepared.response.filesystemLowering ?? null,
       capabilityReport: input.prepared.response.capabilityReport,
+      backendArtifacts: input.prepared.response.backendArtifacts,
     });
   } catch (error) {
     const message = String(error instanceof Error ? error.message : error);
@@ -1314,6 +1320,7 @@ function parsePreparedRunResultJson(input: {
       policyDecision: null,
       environmentGap: null,
       filesystemLowering: input.prepared.response.filesystemLowering,
+      backendArtifacts: input.prepared.response.backendArtifacts,
       fallback: null,
       capabilityReport: input.prepared.response.capabilityReport,
     };

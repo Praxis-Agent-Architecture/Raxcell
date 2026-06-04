@@ -1,4 +1,5 @@
 import type {
+  BackendLoweringArtifact,
   BackendFamily,
   FileSystemLoweringReport,
   ProbeResponse,
@@ -9,6 +10,7 @@ export type RunnerRunResponseContext = {
   backend: BackendFamily | null;
   filesystemLowering: FileSystemLoweringReport | null;
   capabilityReport: ProbeResponse | null;
+  backendArtifacts: BackendLoweringArtifact[] | null;
 };
 
 export function parseRunnerRunResponse(
@@ -37,6 +39,7 @@ export function parseRunnerRunResponse(
     ...response,
     filesystemLowering: response.filesystemLowering ?? context.filesystemLowering,
     capabilityReport: response.capabilityReport ?? context.capabilityReport,
+    backendArtifacts: response.backendArtifacts ?? context.backendArtifacts,
   };
 }
 

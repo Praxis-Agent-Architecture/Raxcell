@@ -203,6 +203,7 @@ export type RunResponse = {
   policyDecision?: PolicyDecisionRequired | null;
   environmentGap?: EnvironmentGap | null;
   filesystemLowering?: FileSystemLoweringReport | null;
+  backendArtifacts?: BackendLoweringArtifact[] | null;
   fallback: unknown | null;
   capabilityReport: ProbeResponse | null;
 };

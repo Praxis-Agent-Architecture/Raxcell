@@ -99,6 +99,17 @@ test("runner protocol parser overlays prepared execution facts", () => {
     policyGrants: [],
     warnings: [],
   };
+  const backendArtifacts = [
+    {
+      backend: "windows-native" as const,
+      format: "windows-native-token-acl-plan",
+      arguments: ["raxcell-windows-runner", "run"],
+      data: {
+        attached: true,
+      },
+      warnings: [],
+    },
+  ];
   const capabilityReport: ProbeResponse = {
     kind: "raxcell.probeResult.v1",
     ready: true,
@@ -116,11 +127,13 @@ test("runner protocol parser overlays prepared execution facts", () => {
       backend: "windows-native",
       filesystemLowering,
       capabilityReport,
+      backendArtifacts,
     }),
     {
       ...runnerResponse,
       filesystemLowering,
       capabilityReport,
+      backendArtifacts,
     },
   );
 });
@@ -147,6 +160,7 @@ test("runner protocol parser rejects backend mismatches", () => {
       backend: "windows-native",
       filesystemLowering: null,
       capabilityReport: null,
+      backendArtifacts: null,
     }),
     /runner response backend must match prepared backend windows-native/,
   );
@@ -1158,6 +1172,7 @@ test("run for unattached native backend fails at provider level without child ex
     assert.equal(response.exitCode, null);
     assert.equal(response.environmentGap?.reason, "host-platform-mismatch");
     assert.equal(response.policyDecision, null);
+    assert.equal(response.backendArtifacts?.[0].format, "macos-seatbelt-sbpl-profile");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -1413,8 +1428,20 @@ test("run response type exposes filesystem lowering report", () => {
     },
     fallback: null,
     capabilityReport: null,
+    backendArtifacts: [
+      {
+        backend: "linux-bubblewrap",
+        format: "linux-bubblewrap-argv",
+        arguments: ["bwrap", "--"],
+        data: {
+          executable: "bwrap",
+        },
+        warnings: [],
+      },
+    ],
   };
   assert.equal(response.filesystemLowering?.runtimeRoots[0].path, "/usr");
+  assert.equal(response.backendArtifacts?.[0].format, "linux-bubblewrap-argv");
 });
 
 test("prepare run response type exposes dry-run lowering result", () => {
