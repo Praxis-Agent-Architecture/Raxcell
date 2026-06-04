@@ -1141,6 +1141,26 @@ test("prepare-run for macos-seatbelt emits literal filters for granted file root
     assert.ok(response.filesystemLowering?.declaredRoots.some((root) => {
       return root.path === externalFile && root.access === "write" && root.source === "policy-grant";
     }));
+    assert.ok((response.backendArtifacts[0].data.rootRules as unknown[]).some((root) => {
+      return typeof root === "object" &&
+        root !== null &&
+        "path" in root &&
+        "access" in root &&
+        "source" in root &&
+        root.path === workspace &&
+        root.access === "write" &&
+        root.source === "declared";
+    }));
+    assert.ok((response.backendArtifacts[0].data.rootRules as unknown[]).some((root) => {
+      return typeof root === "object" &&
+        root !== null &&
+        "path" in root &&
+        "access" in root &&
+        "source" in root &&
+        root.path === externalFile &&
+        root.access === "write" &&
+        root.source === "policy-grant";
+    }));
   } finally {
     rmSync(workspace, { recursive: true, force: true });
     rmSync(externalRoot, { recursive: true, force: true });

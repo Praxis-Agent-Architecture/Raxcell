@@ -389,6 +389,7 @@ Native planned artifact formats:
   - `data.commandEnvMode`: `clean`.
   - `data.writeGrantMaterialization`: `raxcell-precreate`; Raxcell precreates missing approved writable grant paths before launching Seatbelt.
   - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
+  - `data.rootRules`: source-aware read/write roots with `source=declared|policy-grant` for audit display.
   - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
   - `data.runtimeRoots`: backend-runtime read roots added so Seatbelt can execute system tools and libraries; these are not upper-runtime policy grants.
   - `data.networkDenied`: backend network intent.

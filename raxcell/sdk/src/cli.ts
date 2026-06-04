@@ -916,6 +916,7 @@ function plannedMacosSeatbeltArtifact(
       commandEnvMode: "clean",
       writeGrantMaterialization: writeGrantMaterializationMode("macos-seatbelt"),
       commandEnv: buildSandboxCommandEnv(request.command.env),
+      rootRules: loweredFilesystemRoots(filesystemLowering),
       readRoots: loweredRootPaths(filesystemLowering, "read"),
       writeRoots: loweredRootPaths(filesystemLowering, "write"),
       runtimeRoots: filesystemLowering.runtimeRoots,
@@ -1006,6 +1007,18 @@ function loweredRootPaths(
   return filesystemLowering.declaredRoots
     .filter((root) => root.access === access)
     .map((root) => root.path);
+}
+
+function loweredFilesystemRoots(
+  filesystemLowering: FileSystemLoweringReport,
+): Array<Pick<LoweredRoot, "path" | "access" | "source">> {
+  return filesystemLowering.declaredRoots
+    .filter((root) => root.access === "read" || root.access === "write")
+    .map((root) => ({
+      path: root.path,
+      access: root.access,
+      source: root.source,
+    }));
 }
 
 function nativeBackendWarning(backend: BackendFamily): { code: string; message: string } {
