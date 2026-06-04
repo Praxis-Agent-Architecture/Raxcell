@@ -58,7 +58,7 @@ For development against this repository, Praxis can point directly at the build 
 RAXCELL_BIN=/home/proview/Desktop/Praxis_series/development/Raxcell/raxcell/sdk/dist/cli.js
 ```
 
-The current package ships a TypeScript/Node CLI with a Linux bubblewrap runner. It does not yet ship macOS or Windows native runners.
+The current package ships a TypeScript/Node CLI with Linux bubblewrap and macOS Seatbelt runners. Windows native execution is delegated to a native runner contract: set `RAXCELL_WINDOWS_RUNNER` or expose `raxcell-windows-runner` on `PATH`.
 
 ## Core Methods
 
@@ -274,7 +274,7 @@ Then retry `prepareRun()` or call `run()` with the updated request.
 
 ## Shell Filesystem Effects
 
-In `0.1.5`, Linux `prepareRun()` analyzes common POSIX shell filesystem effects before lowering to bubblewrap. Raxcell reports facts; Praxis still owns policy, approval, and audit decisions.
+In `0.1.5`, `prepareRun()` analyzes common shell filesystem effects before backend lowering. Linux and macOS use the POSIX shell analyzer. Windows native requests also recognize common `cmd.exe /c` filesystem effects. Raxcell reports facts; Praxis still owns policy, approval, and audit decisions.
 
 Concrete paths outside declared roots return `policyDecision.reason = "path-outside-declared-roots"` with contextual `required` values:
 
@@ -286,7 +286,12 @@ Concrete paths outside declared roots return `policyDecision.reason = "path-outs
 - `cat`, `grep`, and non-in-place `sed`: `read`;
 - Python `open(..., "w" | "a")`, `Path(...).write_text(...)`: `write`;
 - Node `fs.writeFileSync(...)` and `fs.appendFileSync(...)`: `write`;
-- Python/Node read calls: `read`.
+- Python/Node read calls: `read`;
+- Windows `cmd.exe /c` redirection: `write`;
+- Windows `type`: `read`;
+- Windows `copy` / `xcopy`: source `read`, destination `write`;
+- Windows `move`: source `readwrite`, destination `write`;
+- Windows `del`, `erase`, `md`, and `rd`: `write`.
 
 Dynamic paths fail closed as environment facts, not policy grants:
 
@@ -303,7 +308,7 @@ Dynamic paths fail closed as environment facts, not policy grants:
 }
 ```
 
-Raxcell does not expand `$HOME`, `${TARGET}`, `~`, backticks, or command substitutions from `process.env` or `request.command.env`. Praxis can surface this gap, ask the user, rewrite the command into concrete paths, or deny.
+Raxcell does not expand `$HOME`, `${TARGET}`, `~`, backticks, command substitutions, `%USERPROFILE%`, `%TARGET%`, or delayed `!VAR!` references from `process.env` or `request.command.env`. Praxis can surface this gap, ask the user, rewrite the command into concrete paths, or deny.
 
 `filesystemLowering.effects` contains structured analyzer facts for UI/audit display:
 
@@ -332,8 +337,9 @@ Persist these fields for every command:
 - `RunResponse.denial`
 - `RunResponse.exitCode`
 - `RunResponse.timedOut`
+- `RunResponse.backendArtifacts`
 
-For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual bubblewrap argv:
+For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual bubblewrap argv. `prepareRun` and `run` both expose the prepared artifacts so audit and TUI rendering can use the same facts before and after execution:
 
 ```ts
 const bwrap = prepared.backendArtifacts.find(
@@ -367,12 +373,78 @@ WSL2 should follow the Linux path conceptually because it uses Linux userspace. 
 The protocol already exposes backend families:
 
 - `macos-seatbelt`
+- `windows-native`
 - `windows-elevated`
 - `windows-unelevated`
 
-Raxcell keeps macOS Seatbelt and Windows native runners out of the `0.1.5` npm CLI. They remain future backend work.
+Raxcell can execute `macos-seatbelt` on macOS hosts when `/usr/bin/sandbox-exec` is available. Windows native execution requires a runner binary that enforces restricted token, ACL roots, Job Object limits, and network controls.
 
-On unsupported hosts, those backends fail closed.
+When selected through `backendPreference`, Windows backends return native capability facts and planned lowering artifacts. They fail closed with `environmentGap.reason = "host-platform-mismatch"` on non-Windows hosts, or `environmentGap.reason = "native-backend-runner-unattached"` on Windows hosts without a runner. They do not ask for approval, grant policy, or fall back to host execution.
+
+Native planned artifact formats:
+
+- `linux-bubblewrap-argv`
+  - `arguments`: complete `bwrap` argv used for execution.
+  - `data.commandEnvMode`: `clean`.
+  - `data.writeGrantMaterialization`: `raxcell-precreate`; Raxcell precreates missing approved writable grant paths before launching bubblewrap.
+  - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
+  - `data.rootRules`: source-aware read/write roots with `source=declared|policy-grant` for audit display.
+  - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
+  - `data.runtimeRoots`: backend-runtime read roots mounted so bubblewrap can execute system tools and libraries.
+  - `data.networkMode`: common audit value, `deny` or `allow`.
+  - `data.timeoutMs`: parent-enforced timeout for the spawned `bwrap` process.
+  - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
+- `macos-seatbelt-sbpl-profile`
+  - `arguments`: planned `/usr/bin/sandbox-exec -p <profile> -- <argv...>`.
+  - `data.profile`: generated SBPL profile text.
+  - `data.commandEnvMode`: `clean`.
+  - `data.writeGrantMaterialization`: `raxcell-precreate`; Raxcell precreates missing approved writable grant paths before launching Seatbelt.
+  - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
+  - `data.rootRules`: source-aware read/write roots with `source=declared|policy-grant` for audit display.
+  - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
+  - `data.runtimeRoots`: backend-runtime read roots added so Seatbelt can execute system tools and libraries; these are not upper-runtime policy grants.
+  - `data.networkDenied`: backend network intent.
+  - `data.networkMode`: common audit value, `deny` or `allow`.
+  - `data.timeoutMs`: parent-enforced timeout for the spawned `sandbox-exec` process.
+  - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
+- `windows-native-token-acl-plan`
+  - `data.runnerProtocol`: `raxcell.windowsRunner.run.v1`.
+  - `data.runner`: resolved runner path, when available.
+  - `data.normalizedCwd`: command cwd normalized with Windows path semantics when the request uses Windows-like paths.
+  - `data.commandEnvMode`: `clean`.
+  - `data.writeGrantMaterialization`: `runner-owned`; the native runner owns ACL application and any safe host precreation/copy-out needed for approved write roots.
+  - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
+  - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
+  - `data.aclRoots`: planned filesystem ACL roots; Windows-like paths such as `C:\workspace` keep Windows path shape even when a non-Windows host is only producing planned facts.
+  - `data.networkBlocked`: WFP/network intent.
+  - `data.networkMode`: common audit value, `deny` or `allow`.
+  - `data.timeoutMs`: parent-enforced timeout that the Windows runner should mirror in its Job Object / child process management.
+  - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
+
+The Windows runner receives a JSON object on stdin:
+
+The npm package exports this stdin shape as `WindowsRunnerRunRequest`; runner implementations should pair it with `RunResponse` for stdout.
+
+```json
+{
+  "kind": "raxcell.windowsRunner.run.v1",
+  "backend": "windows-native",
+  "command": {},
+  "normalizedCwd": "C:\\workspace",
+  "commandEnvMode": "clean",
+  "writeGrantMaterialization": "runner-owned",
+  "enforcement": {},
+  "filesystemLowering": {},
+  "tokenMode": "writable-roots-capability",
+  "aclRoots": [],
+  "networkBlocked": true,
+  "networkMode": "deny",
+  "timeoutMs": 1000
+}
+```
+
+It must return `raxcell.runResult.v1` JSON on stdout and keep human/debug output on stderr.
+The returned `backend` must match the prepared Windows backend. Raxcell rejects mismatched runner responses as protocol errors. If the runner omits `filesystemLowering`, `backendArtifacts`, or `capabilityReport`, Raxcell overlays the prepared execution facts before returning the final `raxcell.runResult.v1` to Praxis.
 
 ## Installation From Local Tarball
 

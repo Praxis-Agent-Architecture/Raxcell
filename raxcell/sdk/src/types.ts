@@ -158,6 +158,36 @@ export type RunRequest = {
   fallback: FallbackSpec;
 };
 
+export type WindowsRunnerBackend =
+  | "windows-native"
+  | "windows-elevated"
+  | "windows-unelevated";
+
+export type WindowsRunnerAclRoot = {
+  path: string;
+  access: "read" | "write";
+  source: "declared" | "policy-grant";
+};
+
+export type WindowsRunnerRunRequest = {
+  kind: "raxcell.windowsRunner.run.v1";
+  backend: WindowsRunnerBackend;
+  command: RunRequest["command"] & {
+    env: Record<string, string>;
+  };
+  normalizedCwd: string;
+  commandEnvMode: "clean";
+  writeGrantMaterialization: "runner-owned";
+  enforcement: EnforcementSpec;
+  action: RunRequest["action"];
+  filesystemLowering: FileSystemLoweringReport;
+  tokenMode: "read-only-capability" | "writable-roots-capability";
+  aclRoots: WindowsRunnerAclRoot[];
+  networkBlocked: boolean;
+  networkMode: "allow" | "deny";
+  timeoutMs: number;
+};
+
 export type RunResponse = {
   kind: "raxcell.runResult.v1";
   ok: boolean;
@@ -174,6 +204,7 @@ export type RunResponse = {
   policyDecision?: PolicyDecisionRequired | null;
   environmentGap?: EnvironmentGap | null;
   filesystemLowering?: FileSystemLoweringReport | null;
+  backendArtifacts?: BackendLoweringArtifact[] | null;
   fallback: unknown | null;
   capabilityReport: ProbeResponse | null;
 };

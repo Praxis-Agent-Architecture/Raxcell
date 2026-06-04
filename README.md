@@ -10,25 +10,32 @@ Raxcell is not Praxis-specific. Praxis is the first target runtime, but the cont
 
 Current npm package: `@praxis-ai/raxcell@0.1.5`
 
-Linux is usable today through the TypeScript CLI package:
+Linux and macOS are executable today through the TypeScript CLI package:
 
 - `linux-bubblewrap` executes commands through bubblewrap.
+- `macos-seatbelt` executes commands through `/usr/bin/sandbox-exec` on macOS hosts.
 - Filesystem read/write roots are declared per request.
 - Explicit `policyGrants` can add host path access after an upper runtime has approved it.
 - Write grants are mounted so approved external writes land on the host, not in a sandbox shadow path.
-- Network deny uses bubblewrap network isolation.
+- Network deny uses bubblewrap network isolation on Linux and SBPL network denial on macOS.
 - Timeouts are enforced by Raxcell process management.
 - `prepareRun` returns `filesystemLowering`, analyzer effects, and backend-specific `backendArtifacts`.
 - Linux `backendArtifacts` include the complete bubblewrap argv.
+- macOS `backendArtifacts` include the generated Seatbelt profile, sandbox-exec argv, and backend runtime read roots.
 
-macOS and Windows are protocol-visible future backend families:
+macOS and Windows are protocol-visible native backend families:
 
 - `macos-seatbelt`
 - `windows-elevated`
 - `windows-unelevated`
 - `windows-native`
 
-The `0.1.x` npm CLI only executes the Linux bubblewrap backend. Unsupported or unattached backends fail closed.
+The `0.1.x` npm CLI executes Linux bubblewrap on Linux and macOS Seatbelt on macOS. Windows execution is delegated to a native runner contract: on Windows, Raxcell looks for `RAXCELL_WINDOWS_RUNNER` or `raxcell-windows-runner`; without that runner it returns native capability facts, planned lowering artifacts, and fail-closed environment gaps.
+
+Native planned artifacts are backend-specific:
+
+- `macos-seatbelt-sbpl-profile`: planned `/usr/bin/sandbox-exec` invocation, generated SBPL profile text, clean command env, read/write roots, backend runtime read roots, network deny state, and analyzer effects.
+- `windows-native-token-acl-plan`: planned runner protocol, clean command env, token mode, ACL roots, network block state, process/resource limits, and analyzer effects.
 
 ## Boundary
 
@@ -58,7 +65,7 @@ Praxis / Agent Harness
   -> policy middleware
   -> RaxcellClient
   -> raxcell CLI JSON stdin/stdout
-  -> linux-bubblewrap
+  -> linux-bubblewrap / macos-seatbelt / windows-native
 ```
 
 ## Install
@@ -75,6 +82,13 @@ raxcell probe
 raxcell explain-backend
 raxcell prepare-run < request.json
 raxcell run < request.json
+```
+
+`probe` and `explain-backend` accept optional JSON stdin with `backendPreference`, so an upper runtime can ask for platform-specific facts before routing execution:
+
+```bash
+printf '%s' '{"kind":"raxcell.explainBackend.v1","backendPreference":["windows-native"]}' \
+  | raxcell explain-backend
 ```
 
 For local development against this repository:
@@ -151,6 +165,8 @@ It can return:
 - `policyDecision.reason = "path-outside-declared-roots"`: a concrete path needs upper-runtime policy handling.
 - `environmentGap.reason = "shell-dynamic-path-unresolved"`: a dynamic shell path cannot be normalized safely.
 - `environmentGap.reason = "missing-backend-dependency"`: the selected backend cannot run on this host.
+- `environmentGap.reason = "host-platform-mismatch"`: the requested native backend belongs to a different host platform.
+- `environmentGap.reason = "native-backend-runner-unattached"`: the native backend is selected on the right host, but the executable runner is not attached yet.
 - `denial`: Raxcell cannot safely lower or execute the request.
 
 Concrete external paths use `policyDecision`:
@@ -218,7 +234,7 @@ Use `exitCode`, `stdout`, and `stderr` for command-level behavior. Use `ok: fals
 - `raxcell/sdk`: TypeScript npm package and Linux bubblewrap CLI.
 - `raxcell/sdk/src/types.ts`: JSON protocol types.
 - `raxcell/sdk/src/client.ts`: TypeScript client that spawns the CLI.
-- `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI and Linux bubblewrap runner.
+- `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI plus Linux bubblewrap and macOS Seatbelt runners.
 - `raxcell/sdk/src/shell-effects.ts`: shell filesystem effect analyzer.
 - `raxcell`: Rust workspace retained for protocol/backend research.
 - `specs/raxcell`: extraction plans and integration docs.
