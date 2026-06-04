@@ -386,6 +386,8 @@ Native planned artifact formats:
 - `windows-native-token-acl-plan`
   - `data.runnerProtocol`: `raxcell.windowsRunner.run.v1`.
   - `data.runner`: resolved runner path, when available.
+  - `data.commandEnvMode`: `clean`.
+  - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
   - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
   - `data.aclRoots`: planned filesystem ACL roots.
   - `data.networkBlocked`: WFP/network intent.
@@ -398,6 +400,7 @@ The Windows runner receives a JSON object on stdin:
   "kind": "raxcell.windowsRunner.run.v1",
   "backend": "windows-native",
   "command": {},
+  "commandEnvMode": "clean",
   "enforcement": {},
   "filesystemLowering": {},
   "tokenMode": "writable-roots-capability",

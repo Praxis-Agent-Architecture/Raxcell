@@ -837,6 +837,10 @@ test("prepare-run for unattached native backend returns environment facts and pl
     assert.equal(response.backendArtifacts[0].warnings[0].code, "NATIVE_BACKEND_HOST_PLATFORM_MISMATCH");
     assert.equal(response.backendArtifacts[0].data.attached, false);
     assert.equal(response.backendArtifacts[0].data.runnerProtocol, "raxcell.windowsRunner.run.v1");
+    assert.equal(response.backendArtifacts[0].data.commandEnvMode, "clean");
+    assert.deepEqual(response.backendArtifacts[0].data.commandEnv, {
+      PATH: DEFAULT_COMMAND_PATH,
+    });
     assert.equal(response.backendArtifacts[0].data.tokenMode, "writable-roots-capability");
     assert.equal(response.backendArtifacts[0].data.networkBlocked, true);
     assert.deepEqual(response.backendArtifacts[0].data.aclRoots, [

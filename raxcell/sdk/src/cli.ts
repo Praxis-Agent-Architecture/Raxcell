@@ -971,6 +971,8 @@ function plannedWindowsNativeArtifact(
       selectedOn: process.platform,
       runner: windowsNativeRunnerPath(),
       runnerProtocol: "raxcell.windowsRunner.run.v1",
+      commandEnvMode: "clean",
+      commandEnv: buildSandboxCommandEnv(request.command.env),
       tokenMode: aclRoots.some((root) => root.access === "write")
         ? "writable-roots-capability"
         : "read-only-capability",
@@ -1015,7 +1017,11 @@ function windowsRunnerRequest(
   return {
     kind: "raxcell.windowsRunner.run.v1",
     backend,
-    command: request.command,
+    command: {
+      ...request.command,
+      env: buildSandboxCommandEnv(request.command.env),
+    },
+    commandEnvMode: "clean",
     enforcement: request.enforcement,
     action: request.action,
     filesystemLowering,
