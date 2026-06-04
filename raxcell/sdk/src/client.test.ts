@@ -768,6 +768,7 @@ test("prepare-run for unattached native backend returns environment facts and pl
     assert.deepEqual(response.filesystemLowering?.runtimeRoots, []);
     assert.ok(response.filesystemLowering?.effects?.some((effect) => effect.rawToken === "created.txt"));
     assert.equal(response.backendArtifacts[0].format, "windows-native-token-acl-plan");
+    assert.equal(response.backendArtifacts[0].warnings[0].code, "NATIVE_BACKEND_HOST_PLATFORM_MISMATCH");
     assert.equal(response.backendArtifacts[0].data.attached, false);
     assert.equal(response.backendArtifacts[0].data.runnerProtocol, "raxcell.windowsRunner.run.v1");
     assert.equal(response.backendArtifacts[0].data.tokenMode, "writable-roots-capability");
@@ -821,6 +822,7 @@ test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () 
     assert.match(String(artifact.data.profile), /\(deny network\*\)/);
     assert.deepEqual(artifact.data.readRoots, [workspace]);
     assert.deepEqual(artifact.data.writeRoots, []);
+    assert.equal(artifact.warnings[0].code, "NATIVE_BACKEND_HOST_PLATFORM_MISMATCH");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

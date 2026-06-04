@@ -906,7 +906,7 @@ function plannedMacosSeatbeltArtifact(
       networkDenied: request.enforcement.network === "deny",
       filesystemEffects: filesystemLowering.effects ?? [],
     },
-    warnings: [nativeRunnerWarning("macos-seatbelt")],
+    warnings: [nativeBackendWarning("macos-seatbelt")],
   };
 }
 
@@ -968,7 +968,7 @@ function plannedWindowsNativeArtifact(
       resourceLimits: request.enforcement.resources ?? {},
       filesystemEffects: filesystemLowering.effects ?? [],
     },
-    warnings: [nativeRunnerWarning(backend)],
+    warnings: [nativeBackendWarning(backend)],
   };
 }
 
@@ -981,10 +981,17 @@ function loweredRootPaths(
     .map((root) => root.path);
 }
 
-function nativeRunnerWarning(backend: BackendFamily): { code: string; message: string } {
+function nativeBackendWarning(backend: BackendFamily): { code: string; message: string } {
+  const requiredHost = hostPlatformForBackend(backend);
+  if (process.platform !== requiredHost) {
+    return {
+      code: "NATIVE_BACKEND_HOST_PLATFORM_MISMATCH",
+      message: `${backend} requires a ${requiredHost} host; current host is ${process.platform}.`,
+    };
+  }
   return {
     code: "NATIVE_BACKEND_RUNNER_UNATTACHED",
-    message: `${backend} is protocol-visible but not executable in the 0.1.x npm CLI.`,
+    message: `${backend} runner is not attached on this host.`,
   };
 }
 
