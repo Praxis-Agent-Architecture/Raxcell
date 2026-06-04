@@ -8,7 +8,7 @@ Raxcell is not Praxis-specific. Praxis is the first target runtime, but the cont
 
 ## Status
 
-Current version: `0.1.2`
+Current version: `0.1.3`
 
 Linux is usable today:
 
@@ -22,7 +22,7 @@ Linux is usable today:
 - `prepareRun` returns `filesystemLowering` and backend-specific `backendArtifacts`.
 - Linux `backendArtifacts` include the complete bubblewrap argv.
 
-macOS and Windows are protocol-visible but not enabled as executable runners in `0.1.2`:
+macOS and Windows are protocol-visible but not enabled as executable runners in `0.1.3`:
 
 - `macos-seatbelt` has an internal Seatbelt lowering artifact model.
 - `windows-elevated` and `windows-unelevated` have internal token/ACL/WFP lowering artifact models.
@@ -62,16 +62,16 @@ Upper runtimes own:
 The TypeScript facade package is:
 
 ```text
-@praxis-ai/raxcell@0.1.2
+@praxis-ai/raxcell@0.1.3
 ```
 
 Install from npm:
 
 ```bash
-pnpm add @praxis-ai/raxcell@0.1.2
+pnpm add @praxis-ai/raxcell@0.1.3
 ```
 
-`@praxis-ai/raxcell@0.1.2` exposes a `raxcell` bin. Praxis can either resolve it from `PATH` after package installation, or pass an explicit development build path such as `raxcell/sdk/dist/cli.js`.
+`@praxis-ai/raxcell@0.1.3` exposes a `raxcell` bin. Praxis can either resolve it from `PATH` after package installation, or pass an explicit development build path such as `raxcell/sdk/dist/cli.js`.
 
 ```ts
 import { RaxcellClient, type RunRequest } from "@praxis-ai/raxcell";

@@ -412,7 +412,7 @@ function spawnBubblewrap(
       }
       resolvePromise({
         kind: "raxcell.runResult.v1",
-        ok: code === 0 && !timedOut,
+        ok: true,
         backend: "linux-bubblewrap",
         exitCode: timedOut ? null : code,
         stdout,
@@ -434,6 +434,11 @@ function spawnBubblewrap(
       }, timeoutMs);
     }
 
+    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") {
+        stderr += String(error);
+      }
+    });
     child.stdin.end(request.command.stdin ?? "");
   });
 }
@@ -479,15 +484,6 @@ function buildBwrapArgs(
     args.push(root.access === "write" ? "--bind" : "--ro-bind", root.path, root.path);
   }
 
-  for (const root of filesystemLowering.policyGrants) {
-    if (!existsSync(root.path)) {
-      continue;
-    }
-    const access = root.access?.includes("write") ? "write" : "read";
-    args.push(...parentDirArgs(root.path));
-    args.push(access === "write" ? "--bind" : "--ro-bind", root.path, root.path);
-  }
-
   args.push("--chdir", request.command.cwd, "--", ...request.command.argv);
   return dedupeConsecutiveDirArgs(args);
 }
@@ -495,6 +491,7 @@ function buildBwrapArgs(
 function lowerFilesystem(request: RunRequest): FileSystemLoweringReport {
   const filesystem = request.enforcement.filesystem ?? {};
   const declaredRoots: LoweredRoot[] = [];
+  const policyGrants = normalizePolicyGrants(request.policyGrants ?? []);
 
   for (const path of filesystem.read ?? []) {
     declaredRoots.push({
@@ -510,11 +507,18 @@ function lowerFilesystem(request: RunRequest): FileSystemLoweringReport {
       source: "declared",
     });
   }
+  for (const grant of policyGrants) {
+    declaredRoots.push({
+      path: grant.path,
+      access: grant.access?.includes("write") ? "write" : "read",
+      source: "policy-grant",
+    });
+  }
 
   return {
     declaredRoots: collapseDeclaredRoots(declaredRoots),
     runtimeRoots: runtimeLoweredRoots(),
-    policyGrants: normalizePolicyGrants(request.policyGrants ?? []),
+    policyGrants,
     warnings: [],
   };
 }

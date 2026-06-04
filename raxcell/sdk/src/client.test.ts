@@ -175,6 +175,110 @@ test("cli resolves shell redirection relative paths against command cwd", () => 
   }
 });
 
+test("run keeps ok true when sandbox executes a nonzero command", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-nonzero-"));
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nprintf command-failed >&2\nexit 7\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    command: {
+      argv: ["/bin/sh", "-lc", "exit 7"],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as RunResponse;
+    assert.equal(response.ok, true);
+    assert.equal(response.exitCode, 7);
+    assert.match(response.stderr, /command-failed/);
+    assert.equal(response.denial, null);
+    assert.equal(response.environmentGap, null);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test("prepare-run reports policy grants as lowered policy-grant roots", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-grants-workspace-"));
+  const granted = mkdtempSync(join(tmpdir(), "raxcell-granted-root-"));
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexit 0\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    policyGrants: [
+      {
+        reason: "praxis-approved-read",
+        path: granted,
+        access: ["read"],
+        grantedBy: "praxis-policy",
+      },
+    ],
+    command: {
+      argv: ["/bin/ls", granted],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, true);
+    assert.deepEqual(
+      response.filesystemLowering?.declaredRoots.find((root) => root.path === granted),
+      {
+        path: granted,
+        access: "read",
+        source: "policy-grant",
+      },
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(granted, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
 test("probe request type accepts all first-class backend families", () => {
   const request: ProbeRequest = {
     kind: "raxcell.probe.v1",

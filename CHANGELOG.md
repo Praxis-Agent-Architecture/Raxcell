@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Clarified `run.ok` semantics: a successfully launched sandbox returns `ok: true` even when the command exits nonzero.
+- Preserved command nonzero status in `exitCode`, `stdout`, and `stderr` without converting it into a sandbox denial.
+- Added `source: "policy-grant"` lowered roots for policy-granted paths in `filesystemLowering.declaredRoots`.
+
 ## 0.1.2
 
 - Fixed shell path extraction so relative paths such as `raxcell_live_probe/hello.txt` resolve against `command.cwd`.
