@@ -6,13 +6,16 @@ import { fileURLToPath } from "node:url";
 import { analyzeShellEffects, type ShellEffect } from "./shell-effects.js";
 import type {
   BackendFamily,
+  BackendExplanation,
   BackendLoweringArtifact,
   EnvironmentGap,
+  ExplainBackendRequest,
   FileSystemLoweringReport,
   LoweredRoot,
   PolicyDecisionRequired,
   PolicyGrant,
   PrepareRunResponse,
+  ProbeRequest,
   ProbeResponse,
   RunRequest,
   RunResponse,
@@ -38,6 +41,13 @@ type AllowedRoot = {
 
 const VERSION = readPackageVersion();
 const RUNTIME_READ_ROOTS = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
+const PLATFORM_BACKENDS: BackendFamily[] = [
+  "linux-bubblewrap",
+  "macos-seatbelt",
+  "windows-native",
+  "windows-elevated",
+  "windows-unelevated",
+];
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2).filter((arg) => arg !== "--stdin");
@@ -54,12 +64,14 @@ async function main(): Promise<void> {
   }
 
   if (command === "probe") {
-    writeJson(probeLinux());
+    const request = await readOptionalJsonStdin() as ProbeRequest | null;
+    writeJson(probeBackend(request?.backendPreference));
     return;
   }
 
   if (command === "explain-backend") {
-    const probe = probeLinux();
+    const request = await readOptionalJsonStdin() as ExplainBackendRequest | null;
+    const probe = probeBackend(request?.backendPreference);
     writeJson({
       kind: "raxcell.explainBackendResult.v1",
       selectedBackend: probe.selectedBackend,
@@ -78,21 +90,7 @@ async function main(): Promise<void> {
           sideEffects: ["spawns-process"],
         },
       ],
-      explanation: {
-        backend: probe.selectedBackend,
-        hostPlatforms: ["linux"],
-        isolationPrimitives: [
-          "bubblewrap.bind-mounts",
-          "bubblewrap.unshare-pid",
-          "bubblewrap.unshare-net",
-        ],
-        runtimeRoots: runtimeLoweredRoots(),
-        limits: [
-          "0.1.x supports Linux bubblewrap execution only",
-          "Raxcell reports policy gaps but does not approve them",
-        ],
-        publicSafeMessage: probe.publicSafeMessage,
-      },
+      explanation: explainBackend(probe.selectedBackend, probe),
     });
     return;
   }
@@ -121,13 +119,13 @@ async function main(): Promise<void> {
 
   if (command === "prepare-run") {
     const request = await readRunRequest();
-    writeJson(prepareLinux(request).response);
+    writeJson(prepareRun(request).response);
     return;
   }
 
   if (command === "run") {
     const request = await readRunRequest();
-    writeJson(await runLinux(request));
+    writeJson(await runBackend(request));
     return;
   }
 
@@ -182,6 +180,31 @@ function readJsonStdin(): Promise<unknown> {
   });
 }
 
+function readOptionalJsonStdin(): Promise<unknown | null> {
+  if (process.stdin.isTTY) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolvePromise, reject) => {
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      input += chunk;
+    });
+    process.stdin.on("error", reject);
+    process.stdin.on("end", () => {
+      if (input.trim().length === 0) {
+        resolvePromise(null);
+        return;
+      }
+      try {
+        resolvePromise(JSON.parse(input));
+      } catch (error) {
+        reject(new Error(`Invalid JSON request: ${String(error)}`));
+      }
+    });
+  });
+}
+
 async function readRunRequest(): Promise<RunRequest> {
   const request = await readJsonStdin();
   if (!isRunRequest(request)) {
@@ -202,6 +225,29 @@ function isRunRequest(value: unknown): value is RunRequest {
     typeof request.enforcement === "object" &&
     request.enforcement !== null
   );
+}
+
+function probeBackend(preference: BackendFamily[] = []): ProbeResponse {
+  const selectedBackend = selectBackend(preference);
+  if (selectedBackend === "linux-bubblewrap") {
+    return probeLinux();
+  }
+  return probeUnattachedNativeBackend(selectedBackend);
+}
+
+function selectBackend(preference: BackendFamily[] = []): BackendFamily {
+  for (const backend of preference) {
+    if (PLATFORM_BACKENDS.includes(backend)) {
+      return backend;
+    }
+  }
+  if (process.platform === "darwin") {
+    return "macos-seatbelt";
+  }
+  if (process.platform === "win32") {
+    return "windows-native";
+  }
+  return "linux-bubblewrap";
 }
 
 function probeLinux(): ProbeResponse {
@@ -243,11 +289,119 @@ function probeLinux(): ProbeResponse {
   };
 }
 
+function probeUnattachedNativeBackend(backend: BackendFamily): ProbeResponse {
+  const hostPlatform = hostPlatformForBackend(backend);
+  const hostMatches = process.platform === hostPlatform;
+  const missing = hostMatches ? [nativeRunnerDependency(backend)] : [hostPlatform];
+  const nextActions = hostMatches
+    ? [`Attach the ${backend} runner before executing this backend.`]
+    : [`Route this request to a ${hostPlatform} host or select a backend available on this host.`];
+  return {
+    kind: "raxcell.probeResult.v1",
+    ready: false,
+    selectedBackend: backend,
+    supports: {
+      filesystem: "unknown",
+      network: "unknown",
+      process: "unknown",
+      timeout: "partial",
+    },
+    limits: [
+      `${backend} is protocol-visible but not executable in the 0.1.x npm CLI.`,
+      "Raxcell reports policy gaps but does not approve them.",
+    ],
+    weaknesses: [],
+    missing,
+    nextActions,
+    publicSafeMessage: hostMatches
+      ? `${backend} runner is not attached`
+      : `${backend} cannot run on this host`,
+  };
+}
+
+function explainBackend(
+  backend: BackendFamily | null,
+  probe: ProbeResponse,
+): BackendExplanation {
+  if (backend === "linux-bubblewrap") {
+    return {
+      backend,
+      hostPlatforms: ["linux"],
+      isolationPrimitives: [
+        "bubblewrap.bind-mounts",
+        "bubblewrap.unshare-pid",
+        "bubblewrap.unshare-net",
+      ],
+      runtimeRoots: runtimeLoweredRoots(),
+      limits: [
+        "0.1.x supports Linux bubblewrap execution only",
+        "Raxcell reports policy gaps but does not approve them",
+      ],
+      publicSafeMessage: probe.publicSafeMessage,
+    };
+  }
+  if (backend === "macos-seatbelt") {
+    return {
+      backend,
+      hostPlatforms: ["darwin"],
+      isolationPrimitives: [
+        "apple-seatbelt.sbpl-profile",
+        "sandbox-exec",
+        "profile-scoped-file-read-write-rules",
+      ],
+      runtimeRoots: [],
+      limits: [
+        "macOS Seatbelt is protocol-visible but the 0.1.x npm CLI has no attached runner.",
+        "Raxcell will fail closed until native execution is attached.",
+      ],
+      publicSafeMessage: probe.publicSafeMessage,
+    };
+  }
+  if (
+    backend === "windows-native" ||
+    backend === "windows-elevated" ||
+    backend === "windows-unelevated"
+  ) {
+    return {
+      backend,
+      hostPlatforms: ["win32"],
+      isolationPrimitives: [
+        "windows-restricted-token",
+        "filesystem-acl-capability-roots",
+        "job-object-process-limits",
+        "wfp-network-filtering",
+      ],
+      runtimeRoots: [],
+      limits: [
+        "Windows native sandboxing is protocol-visible but the 0.1.x npm CLI has no attached runner.",
+        "Raxcell will fail closed until native token/ACL/WFP execution is attached.",
+      ],
+      publicSafeMessage: probe.publicSafeMessage,
+    };
+  }
+  return {
+    backend,
+    hostPlatforms: [],
+    isolationPrimitives: [],
+    runtimeRoots: [],
+    limits: ["No executable backend is selected."],
+    publicSafeMessage: probe.publicSafeMessage,
+  };
+}
+
+function prepareRun(request: RunRequest): PreparedLinuxRun {
+  const backend = selectBackend(request.backendPreference);
+  if (backend === "linux-bubblewrap") {
+    return prepareLinux(request);
+  }
+  return prepareUnattachedNative(request, backend);
+}
+
 function prepareLinux(request: RunRequest): PreparedLinuxRun {
   const capabilityReport = probeLinux();
   const bwrapExecutable = findExecutable("bwrap") ?? findExecutable("bubblewrap");
   const backend: BackendFamily | null = capabilityReport.ready ? "linux-bubblewrap" : null;
-  const filesystemLowering = lowerFilesystem(request);
+  const filesystemLowering = lowerFilesystem(request, "linux-bubblewrap");
 
   if (!capabilityReport.ready || !bwrapExecutable) {
     const environmentGap: EnvironmentGap = {
@@ -363,8 +517,50 @@ function prepareLinux(request: RunRequest): PreparedLinuxRun {
   };
 }
 
-async function runLinux(request: RunRequest): Promise<RunResponse> {
-  const prepared = prepareLinux(request);
+function prepareUnattachedNative(
+  request: RunRequest,
+  backend: BackendFamily,
+): PreparedLinuxRun {
+  const capabilityReport = probeUnattachedNativeBackend(backend);
+  const filesystemLowering = lowerFilesystem(request, backend);
+  const gap: EnvironmentGap = nativeBackendEnvironmentGap(backend);
+  return {
+    response: {
+      kind: "raxcell.prepareRunResult.v1",
+      ok: false,
+      backend,
+      denial: denial("BACKEND_UNAVAILABLE", gap.publicSafeMessage),
+      policyDecision: null,
+      environmentGap: gap,
+      filesystemLowering,
+      backendArtifacts: [
+        {
+          backend,
+          format: `${backend}-planned-lowering`,
+          arguments: [],
+          data: {
+            attached: false,
+            hostPlatform: hostPlatformForBackend(backend),
+            selectedOn: process.platform,
+            filesystemEffects: filesystemLowering.effects ?? [],
+          },
+          warnings: [
+            {
+              code: "NATIVE_BACKEND_RUNNER_UNATTACHED",
+              message: `${backend} is protocol-visible but not executable in the 0.1.x npm CLI.`,
+            },
+          ],
+        },
+      ],
+      capabilityReport,
+    },
+    bwrapExecutable: null,
+    bwrapArgs: [],
+  };
+}
+
+async function runBackend(request: RunRequest): Promise<RunResponse> {
+  const prepared = prepareRun(request);
 
   if (!prepared.response.ok || prepared.response.policyDecision || !prepared.bwrapExecutable) {
     return {
@@ -406,6 +602,45 @@ async function runLinux(request: RunRequest): Promise<RunResponse> {
   }
 
   return spawnBubblewrap(request, prepared);
+}
+
+function nativeBackendEnvironmentGap(backend: BackendFamily): EnvironmentGap {
+  const requiredHost = hostPlatformForBackend(backend);
+  if (process.platform !== requiredHost) {
+    return {
+      reason: "host-platform-mismatch",
+      path: backend,
+      required: [requiredHost, backend],
+      publicSafeMessage: `${backend} requires a ${requiredHost} host.`,
+    };
+  }
+  return {
+    reason: "native-backend-runner-unattached",
+    path: backend,
+    required: [backend, nativeRunnerDependency(backend)],
+    publicSafeMessage: `${backend} runner is not attached.`,
+  };
+}
+
+function hostPlatformForBackend(backend: BackendFamily): NodeJS.Platform {
+  if (backend === "macos-seatbelt") {
+    return "darwin";
+  }
+  if (
+    backend === "windows-native" ||
+    backend === "windows-elevated" ||
+    backend === "windows-unelevated"
+  ) {
+    return "win32";
+  }
+  return "linux";
+}
+
+function nativeRunnerDependency(backend: BackendFamily): string {
+  if (backend === "macos-seatbelt") {
+    return "/usr/bin/sandbox-exec";
+  }
+  return "windows-native-runner";
 }
 
 function spawnBubblewrap(
@@ -529,7 +764,10 @@ function buildBwrapArgs(
   return dedupeConsecutiveDirArgs(args);
 }
 
-function lowerFilesystem(request: RunRequest): FileSystemLoweringReport {
+function lowerFilesystem(
+  request: RunRequest,
+  backend: BackendFamily = "linux-bubblewrap",
+): FileSystemLoweringReport {
   const filesystem = request.enforcement.filesystem ?? {};
   const declaredRoots: LoweredRoot[] = [];
   const policyGrants = normalizePolicyGrants(request.policyGrants ?? []);
@@ -558,7 +796,7 @@ function lowerFilesystem(request: RunRequest): FileSystemLoweringReport {
 
   return {
     declaredRoots: collapseDeclaredRoots(declaredRoots),
-    runtimeRoots: runtimeLoweredRoots(),
+    runtimeRoots: runtimeLoweredRootsForBackend(backend),
     policyGrants,
     warnings: [],
     effects: analyzeShellEffects(request.command.argv, normalizeAbsolute(request.command.cwd)),
@@ -594,6 +832,10 @@ function runtimeLoweredRoots(): LoweredRoot[] {
     access: "runtime",
     source: "backend-runtime",
   }));
+}
+
+function runtimeLoweredRootsForBackend(backend: BackendFamily): LoweredRoot[] {
+  return backend === "linux-bubblewrap" ? runtimeLoweredRoots() : [];
 }
 
 function collapseDeclaredRoots(roots: LoweredRoot[]): LoweredRoot[] {

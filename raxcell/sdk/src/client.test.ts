@@ -12,6 +12,7 @@ import type {
   PolicyPack,
   PrepareRunResponse,
   ProbeRequest,
+  ProbeResponse,
   ResolveProfileRequest,
   RunRequest,
   RunResponse,
@@ -109,6 +110,37 @@ test("cli exposes package version", () => {
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+$/);
+});
+
+test("probe respects backend preference for protocol-visible native backends", () => {
+  const result = spawnSync(cliPath, ["probe"], {
+    encoding: "utf8",
+    input: JSON.stringify({
+      kind: "raxcell.probe.v1",
+      backendPreference: ["macos-seatbelt"],
+    }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const response = JSON.parse(result.stdout) as ProbeResponse;
+  assert.equal(response.ready, false);
+  assert.equal(response.selectedBackend, "macos-seatbelt");
+  assert.match(response.publicSafeMessage, /macos-seatbelt/);
+});
+
+test("explain-backend exposes native primitives without claiming execution readiness", () => {
+  const result = spawnSync(cliPath, ["explain-backend"], {
+    encoding: "utf8",
+    input: JSON.stringify({
+      kind: "raxcell.explainBackend.v1",
+      backendPreference: ["windows-native"],
+    }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const response = JSON.parse(result.stdout) as ExplainBackendResponse;
+  assert.equal(response.selectedBackend, "windows-native");
+  assert.equal(response.probe.ready, false);
+  assert.ok(response.explanation.isolationPrimitives.includes("windows-restricted-token"));
+  assert.match(response.explanation.limits.join("\n"), /no attached runner/);
 });
 
 test("client dispatches prepare-run and run through stdin JSON", async () => {
@@ -669,6 +701,83 @@ test(
     }
   },
 );
+
+test("prepare-run for unattached native backend returns environment facts and planned artifact", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-native-prepare-workspace-"));
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    backendPreference: ["windows-native"],
+    command: {
+      argv: ["/bin/sh", "-lc", "printf hello > created.txt"],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, false);
+    assert.equal(response.backend, "windows-native");
+    assert.equal(response.policyDecision, null);
+    assert.equal(response.environmentGap?.reason, "host-platform-mismatch");
+    assert.deepEqual(response.filesystemLowering?.runtimeRoots, []);
+    assert.ok(response.filesystemLowering?.effects?.some((effect) => effect.rawToken === "created.txt"));
+    assert.equal(response.backendArtifacts[0].format, "windows-native-planned-lowering");
+    assert.equal(response.backendArtifacts[0].data.attached, false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("run for unattached native backend fails at provider level without child exit code", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-native-run-workspace-"));
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    backendPreference: ["macos-seatbelt"],
+    command: {
+      argv: ["/bin/sh", "-lc", "exit 7"],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["run"], {
+      encoding: "utf8",
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as RunResponse;
+    assert.equal(response.ok, false);
+    assert.equal(response.backend, "macos-seatbelt");
+    assert.equal(response.exitCode, null);
+    assert.equal(response.environmentGap?.reason, "host-platform-mismatch");
+    assert.equal(response.policyDecision, null);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 test("probe request type accepts all first-class backend families", () => {
   const request: ProbeRequest = {

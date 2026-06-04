@@ -21,14 +21,14 @@ Linux is usable today through the TypeScript CLI package:
 - `prepareRun` returns `filesystemLowering`, analyzer effects, and backend-specific `backendArtifacts`.
 - Linux `backendArtifacts` include the complete bubblewrap argv.
 
-macOS and Windows are protocol-visible future backend families:
+macOS and Windows are protocol-visible native backend families:
 
 - `macos-seatbelt`
 - `windows-elevated`
 - `windows-unelevated`
 - `windows-native`
 
-The `0.1.x` npm CLI only executes the Linux bubblewrap backend. Unsupported or unattached backends fail closed.
+The `0.1.x` npm CLI only executes the Linux bubblewrap backend. macOS and Windows preferences are still useful for `probe`, `explain-backend`, and fail-closed `prepare-run` responses: they return native capability facts, planned lowering artifacts, and environment gaps without pretending a native runner is attached.
 
 ## Boundary
 
@@ -75,6 +75,13 @@ raxcell probe
 raxcell explain-backend
 raxcell prepare-run < request.json
 raxcell run < request.json
+```
+
+`probe` and `explain-backend` accept optional JSON stdin with `backendPreference`, so an upper runtime can ask for platform-specific facts before routing execution:
+
+```bash
+printf '%s' '{"kind":"raxcell.explainBackend.v1","backendPreference":["windows-native"]}' \
+  | raxcell explain-backend
 ```
 
 For local development against this repository:
@@ -151,6 +158,8 @@ It can return:
 - `policyDecision.reason = "path-outside-declared-roots"`: a concrete path needs upper-runtime policy handling.
 - `environmentGap.reason = "shell-dynamic-path-unresolved"`: a dynamic shell path cannot be normalized safely.
 - `environmentGap.reason = "missing-backend-dependency"`: the selected backend cannot run on this host.
+- `environmentGap.reason = "host-platform-mismatch"`: the requested native backend belongs to a different host platform.
+- `environmentGap.reason = "native-backend-runner-unattached"`: the native backend is selected on the right host, but the executable runner is not attached yet.
 - `denial`: Raxcell cannot safely lower or execute the request.
 
 Concrete external paths use `policyDecision`:
