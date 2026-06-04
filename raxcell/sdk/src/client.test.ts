@@ -672,6 +672,50 @@ test("prepare-run reports dynamic shell paths as environment gap", () => {
   }
 });
 
+test("prepare-run only treats backend-specific runtime paths as runtime roots", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-runtime-backend-workspace-"));
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexit 0\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    backendPreference: ["linux-bubblewrap"],
+    command: {
+      argv: ["/bin/sh", "-lc", "cat /System/raxcell.txt"],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, false);
+    assert.equal(response.policyDecision?.reason, "path-outside-declared-roots");
+    assert.equal(response.policyDecision?.path, "/System/raxcell.txt");
+    assert.deepEqual(response.policyDecision?.required, ["read"]);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
 test(
   "run with write grant writes external absolute path to the host",
   { skip: !hasBwrap },
@@ -820,8 +864,15 @@ test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () 
     assert.equal(artifact.arguments[0], "/usr/bin/sandbox-exec");
     assert.match(String(artifact.data.profile), /\(deny default\)/);
     assert.match(String(artifact.data.profile), /\(deny network\*\)/);
+    assert.match(String(artifact.data.profile), /\(allow file-read\* \(subpath "\/usr"\)\)/);
     assert.deepEqual(artifact.data.readRoots, [workspace]);
     assert.deepEqual(artifact.data.writeRoots, []);
+    assert.ok(response.filesystemLowering?.runtimeRoots.some((root) => root.path === "/usr"));
+    assert.ok(response.filesystemLowering?.runtimeRoots.some((root) => root.path === "/System"));
+    assert.ok(Array.isArray(artifact.data.runtimeRoots));
+    assert.ok((artifact.data.runtimeRoots as unknown[]).some((root) => {
+      return typeof root === "object" && root !== null && "path" in root && root.path === "/usr";
+    }));
     assert.equal(artifact.warnings[0].code, "NATIVE_BACKEND_HOST_PLATFORM_MISMATCH");
   } finally {
     rmSync(workspace, { recursive: true, force: true });

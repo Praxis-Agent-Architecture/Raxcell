@@ -21,7 +21,7 @@ Linux and macOS are executable today through the TypeScript CLI package:
 - Timeouts are enforced by Raxcell process management.
 - `prepareRun` returns `filesystemLowering`, analyzer effects, and backend-specific `backendArtifacts`.
 - Linux `backendArtifacts` include the complete bubblewrap argv.
-- macOS `backendArtifacts` include the generated Seatbelt profile and sandbox-exec argv.
+- macOS `backendArtifacts` include the generated Seatbelt profile, sandbox-exec argv, and backend runtime read roots.
 
 macOS and Windows are protocol-visible native backend families:
 
@@ -34,7 +34,7 @@ The `0.1.x` npm CLI executes Linux bubblewrap on Linux and macOS Seatbelt on mac
 
 Native planned artifacts are backend-specific:
 
-- `macos-seatbelt-sbpl-profile`: planned `/usr/bin/sandbox-exec` invocation, generated SBPL profile text, read/write roots, network deny state, and analyzer effects.
+- `macos-seatbelt-sbpl-profile`: planned `/usr/bin/sandbox-exec` invocation, generated SBPL profile text, read/write roots, backend runtime read roots, network deny state, and analyzer effects.
 - `windows-native-token-acl-plan`: planned runner protocol, token mode, ACL roots, network block state, process/resource limits, and analyzer effects.
 
 ## Boundary

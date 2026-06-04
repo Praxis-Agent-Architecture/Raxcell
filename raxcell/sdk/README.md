@@ -381,6 +381,7 @@ Native planned artifact formats:
   - `arguments`: planned `/usr/bin/sandbox-exec -p <profile> -- <argv...>`.
   - `data.profile`: generated SBPL profile text.
   - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
+  - `data.runtimeRoots`: backend-runtime read roots added so Seatbelt can execute system tools and libraries; these are not upper-runtime policy grants.
   - `data.networkDenied`: backend network intent.
 - `windows-native-token-acl-plan`
   - `data.runnerProtocol`: `raxcell.windowsRunner.run.v1`.

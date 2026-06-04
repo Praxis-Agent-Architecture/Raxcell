@@ -45,7 +45,8 @@ type AllowedRoot = {
 };
 
 const VERSION = readPackageVersion();
-const RUNTIME_READ_ROOTS = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
+const LINUX_RUNTIME_READ_ROOTS = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
+const MACOS_RUNTIME_READ_ROOTS = ["/System", "/usr", "/bin", "/sbin", "/etc", "/private/etc"];
 const PLATFORM_BACKENDS: BackendFamily[] = [
   "linux-bubblewrap",
   "macos-seatbelt",
@@ -423,7 +424,7 @@ function explainBackend(
         "bubblewrap.unshare-pid",
         "bubblewrap.unshare-net",
       ],
-      runtimeRoots: runtimeLoweredRoots(),
+      runtimeRoots: runtimeLoweredRootsForBackend("linux-bubblewrap"),
       limits: [
         "0.1.x supports Linux bubblewrap and macOS Seatbelt execution",
         "Raxcell reports policy gaps but does not approve them",
@@ -440,7 +441,7 @@ function explainBackend(
         "sandbox-exec",
         "profile-scoped-file-read-write-rules",
       ],
-      runtimeRoots: [],
+      runtimeRoots: runtimeLoweredRootsForBackend("macos-seatbelt"),
       limits: [
         "macOS Seatbelt executes through /usr/bin/sandbox-exec on macOS hosts.",
         "Raxcell fails closed on non-macOS hosts or when sandbox-exec is unavailable.",
@@ -563,7 +564,11 @@ function prepareLinux(request: RunRequest): PreparedBackendRun {
     };
   }
 
-  const pathDecision = argvPathPolicyDecision(request, filesystemLowering.policyGrants);
+  const pathDecision = argvPathPolicyDecision(
+    request,
+    filesystemLowering.policyGrants,
+    "linux-bubblewrap",
+  );
   if (pathDecision) {
     return {
       response: {
@@ -676,7 +681,7 @@ function prepareMacosSeatbelt(request: RunRequest): PreparedBackendRun {
     };
   }
 
-  const pathDecision = argvPathPolicyDecision(request, filesystemLowering.policyGrants);
+  const pathDecision = argvPathPolicyDecision(request, filesystemLowering.policyGrants, backend);
   if (pathDecision) {
     return {
       response: {
@@ -818,7 +823,7 @@ function prepareWindowsNative(
     };
   }
 
-  const pathDecision = argvPathPolicyDecision(request, filesystemLowering.policyGrants);
+  const pathDecision = argvPathPolicyDecision(request, filesystemLowering.policyGrants, backend);
   if (pathDecision) {
     return {
       response: {
@@ -903,6 +908,7 @@ function plannedMacosSeatbeltArtifact(
       profile,
       readRoots: loweredRootPaths(filesystemLowering, "read"),
       writeRoots: loweredRootPaths(filesystemLowering, "write"),
+      runtimeRoots: filesystemLowering.runtimeRoots,
       networkDenied: request.enforcement.network === "deny",
       filesystemEffects: filesystemLowering.effects ?? [],
     },
@@ -922,6 +928,9 @@ function macosSeatbeltProfile(
     "(allow sysctl-read)",
     "(allow file-read-metadata)",
   ];
+  for (const root of uniquePaths(filesystemLowering.runtimeRoots.map((runtimeRoot) => runtimeRoot.path))) {
+    lines.push(`(allow file-read* (subpath ${sbplString(root)}))`);
+  }
   for (const root of loweredRootPaths(filesystemLowering, "read")) {
     lines.push(`(allow file-read* (subpath ${sbplString(root)}))`);
   }
@@ -1299,7 +1308,7 @@ function buildBwrapArgs(
 
   args.push("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
 
-  for (const runtimeRoot of RUNTIME_READ_ROOTS) {
+  for (const runtimeRoot of LINUX_RUNTIME_READ_ROOTS) {
     if (existsSync(runtimeRoot)) {
       args.push(...parentDirArgs(runtimeRoot), "--ro-bind", runtimeRoot, runtimeRoot);
     }
@@ -1379,8 +1388,8 @@ function isMaterializableWriteGrant(root: LoweredRoot): boolean {
   return root.source === "policy-grant" && root.access === "write";
 }
 
-function runtimeLoweredRoots(): LoweredRoot[] {
-  return RUNTIME_READ_ROOTS.filter(existsSync).map((path) => ({
+function runtimeLoweredRoots(paths: string[], filterExisting: boolean): LoweredRoot[] {
+  return paths.filter((path) => !filterExisting || existsSync(path)).map((path) => ({
     path,
     access: "runtime",
     source: "backend-runtime",
@@ -1388,7 +1397,13 @@ function runtimeLoweredRoots(): LoweredRoot[] {
 }
 
 function runtimeLoweredRootsForBackend(backend: BackendFamily): LoweredRoot[] {
-  return backend === "linux-bubblewrap" ? runtimeLoweredRoots() : [];
+  if (backend === "linux-bubblewrap") {
+    return runtimeLoweredRoots(LINUX_RUNTIME_READ_ROOTS, true);
+  }
+  if (backend === "macos-seatbelt") {
+    return runtimeLoweredRoots(MACOS_RUNTIME_READ_ROOTS, false);
+  }
+  return [];
 }
 
 function collapseDeclaredRoots(roots: LoweredRoot[]): LoweredRoot[] {
@@ -1407,6 +1422,10 @@ function normalizePolicyGrants(grants: PolicyGrant[]): PolicyGrant[] {
     ...grant,
     path: normalizeAbsolute(grant.path),
   }));
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
 }
 
 function cwdPolicyDecision(
@@ -1428,6 +1447,7 @@ function cwdPolicyDecision(
 function argvPathPolicyDecision(
   request: RunRequest,
   policyGrants: PolicyGrant[],
+  backend: BackendFamily,
 ): PolicyDecisionRequired | null {
   const roots = allowedRoots(request, policyGrants);
   const requirements = new Map<string, Set<"read" | "write">>();
@@ -1437,7 +1457,7 @@ function argvPathPolicyDecision(
       continue;
     }
     const path = effect.path ?? effect.pattern;
-    if (!path || isRuntimePath(path)) {
+    if (!path || isRuntimePath(path, backend)) {
       continue;
     }
     const accessSet = requirements.get(path) ?? new Set<"read" | "write">();
@@ -1526,8 +1546,9 @@ function isAllowedPath(
   });
 }
 
-function isRuntimePath(path: string): boolean {
-  return RUNTIME_READ_ROOTS.some((root) => path === root || path.startsWith(`${root}/`));
+function isRuntimePath(path: string, backend: BackendFamily): boolean {
+  return runtimeLoweredRootsForBackend(backend)
+    .some((root) => path === root.path || path.startsWith(`${root.path}/`));
 }
 
 function normalizeAbsolute(path: string): string {
