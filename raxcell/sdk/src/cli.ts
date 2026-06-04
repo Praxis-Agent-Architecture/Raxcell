@@ -987,6 +987,7 @@ function plannedWindowsNativeArtifact(
         : "read-only-capability",
       aclRoots,
       networkBlocked: request.enforcement.network === "deny",
+      timeoutMs: getTimeoutMs(request),
       processLimits: request.enforcement.process ?? {},
       resourceLimits: request.enforcement.resources ?? {},
       filesystemEffects: filesystemLowering.effects ?? [],
@@ -1039,6 +1040,7 @@ function windowsRunnerRequest(
     tokenMode: plannedWindowsTokenMode(filesystemLowering),
     aclRoots: plannedWindowsAclRoots(filesystemLowering),
     networkBlocked: request.enforcement.network === "deny",
+    timeoutMs: getTimeoutMs(request),
   };
 }
 

@@ -961,6 +961,7 @@ test("prepare-run for unattached native backend returns environment facts and pl
     });
     assert.equal(response.backendArtifacts[0].data.tokenMode, "writable-roots-capability");
     assert.equal(response.backendArtifacts[0].data.networkBlocked, true);
+    assert.equal(response.backendArtifacts[0].data.timeoutMs, 1000);
     assert.deepEqual(response.backendArtifacts[0].data.aclRoots, [
       {
         path: workspace,
@@ -1350,8 +1351,11 @@ test("windows runner request type exposes native runner protocol surface", () =>
       },
       network: "deny",
       process: {},
-      resources: {},
+      resources: {
+        timeoutMs: 1000,
+      },
     },
+    timeoutMs: 1000,
     action: {
       actionId: "windows-runner-type",
       ownerRuntime: "praxis",

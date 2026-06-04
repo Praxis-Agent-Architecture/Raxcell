@@ -184,6 +184,7 @@ export type WindowsRunnerRunRequest = {
   tokenMode: "read-only-capability" | "writable-roots-capability";
   aclRoots: WindowsRunnerAclRoot[];
   networkBlocked: boolean;
+  timeoutMs: number;
 };
 
 export type RunResponse = {

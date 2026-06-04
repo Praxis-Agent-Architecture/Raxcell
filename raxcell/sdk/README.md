@@ -401,6 +401,7 @@ Native planned artifact formats:
   - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
   - `data.aclRoots`: planned filesystem ACL roots; Windows-like paths such as `C:\workspace` keep Windows path shape even when a non-Windows host is only producing planned facts.
   - `data.networkBlocked`: WFP/network intent.
+  - `data.timeoutMs`: parent-enforced timeout that the Windows runner should mirror in its Job Object / child process management.
   - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
 
 The Windows runner receives a JSON object on stdin:
@@ -419,7 +420,8 @@ The npm package exports this stdin shape as `WindowsRunnerRunRequest`; runner im
   "filesystemLowering": {},
   "tokenMode": "writable-roots-capability",
   "aclRoots": [],
-  "networkBlocked": true
+  "networkBlocked": true,
+  "timeoutMs": 1000
 }
 ```
 
