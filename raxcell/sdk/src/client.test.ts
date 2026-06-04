@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RaxcellClient } from "./client.js";
+import { writeGrantMaterializationMode } from "./backend-materialization.js";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellEffects, analyzeShellScript } from "./shell-effects.js";
 import { DEFAULT_COMMAND_PATH, buildPreparedSpawnEnv } from "./spawn-env.js";
@@ -25,6 +26,14 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = resolve(testDir, "../package.json");
 const cliPath = resolve(testDir, "cli.js");
 const hasBwrap = spawnSync("which", ["bwrap"]).status === 0;
+
+test("write grant materialization mode follows backend ownership", () => {
+  assert.equal(writeGrantMaterializationMode("linux-bubblewrap"), "raxcell-precreate");
+  assert.equal(writeGrantMaterializationMode("macos-seatbelt"), "raxcell-precreate");
+  assert.equal(writeGrantMaterializationMode("windows-native"), "runner-owned");
+  assert.equal(writeGrantMaterializationMode("windows-elevated"), "runner-owned");
+  assert.equal(writeGrantMaterializationMode("windows-unelevated"), "runner-owned");
+});
 
 test("clean prepared spawn env does not inherit host environment", () => {
   const hostEnv = {

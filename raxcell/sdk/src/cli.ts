@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, normalize, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeGrantMaterializationMode } from "./backend-materialization.js";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellEffects, type ShellEffect } from "./shell-effects.js";
 import { buildPreparedSpawnEnv, buildSandboxCommandEnv, type SpawnEnvMode } from "./spawn-env.js";
@@ -913,7 +914,7 @@ function plannedMacosSeatbeltArtifact(
       selectedOn: process.platform,
       profile,
       commandEnvMode: "clean",
-      writeGrantMaterialization: "raxcell-precreate",
+      writeGrantMaterialization: writeGrantMaterializationMode("macos-seatbelt"),
       commandEnv: buildSandboxCommandEnv(request.command.env),
       readRoots: loweredRootPaths(filesystemLowering, "read"),
       writeRoots: loweredRootPaths(filesystemLowering, "write"),
@@ -979,7 +980,7 @@ function plannedWindowsNativeArtifact(
       runnerProtocol: "raxcell.windowsRunner.run.v1",
       normalizedCwd: normalizeAbsoluteForBackend(request.command.cwd, backend),
       commandEnvMode: "clean",
-      writeGrantMaterialization: "runner-owned",
+      writeGrantMaterialization: writeGrantMaterializationMode(backend),
       commandEnv: buildSandboxCommandEnv(request.command.env),
       tokenMode: aclRoots.some((root) => root.access === "write")
         ? "writable-roots-capability"
@@ -1031,7 +1032,7 @@ function windowsRunnerRequest(
     },
     normalizedCwd: normalizeAbsoluteForBackend(request.command.cwd, backend),
     commandEnvMode: "clean",
-    writeGrantMaterialization: "runner-owned",
+    writeGrantMaterialization: writeGrantMaterializationMode(backend),
     enforcement: request.enforcement,
     action: request.action,
     filesystemLowering,
@@ -1097,25 +1098,27 @@ async function runBackend(request: RunRequest): Promise<RunResponse> {
     };
   }
 
-  const materializationDenial = materializeWriteGrantMounts(
-    prepared.response.filesystemLowering!,
-  );
-  if (materializationDenial) {
-    return {
-      kind: "raxcell.runResult.v1",
-      ok: false,
-      backend: prepared.response.backend,
-      exitCode: null,
-      stdout: "",
-      stderr: "",
-      timedOut: false,
-      denial: materializationDenial,
-      policyDecision: null,
-      environmentGap: null,
-      filesystemLowering: prepared.response.filesystemLowering,
-      fallback: null,
-      capabilityReport: prepared.response.capabilityReport,
-    };
+  if (writeGrantMaterializationMode(prepared.response.backend) === "raxcell-precreate") {
+    const materializationDenial = materializeWriteGrantMounts(
+      prepared.response.filesystemLowering!,
+    );
+    if (materializationDenial) {
+      return {
+        kind: "raxcell.runResult.v1",
+        ok: false,
+        backend: prepared.response.backend,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        denial: materializationDenial,
+        policyDecision: null,
+        environmentGap: null,
+        filesystemLowering: prepared.response.filesystemLowering,
+        fallback: null,
+        capabilityReport: prepared.response.capabilityReport,
+      };
+    }
   }
 
   return spawnPreparedCommand(request, prepared);
