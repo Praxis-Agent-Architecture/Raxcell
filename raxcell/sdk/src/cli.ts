@@ -912,6 +912,8 @@ function plannedMacosSeatbeltArtifact(
       hostPlatform: "darwin",
       selectedOn: process.platform,
       profile,
+      commandEnvMode: "clean",
+      commandEnv: buildSandboxCommandEnv(request.command.env),
       readRoots: loweredRootPaths(filesystemLowering, "read"),
       writeRoots: loweredRootPaths(filesystemLowering, "write"),
       runtimeRoots: filesystemLowering.runtimeRoots,

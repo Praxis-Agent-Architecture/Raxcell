@@ -900,6 +900,10 @@ test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () 
     assert.ok((artifact.data.runtimeRoots as unknown[]).some((root) => {
       return typeof root === "object" && root !== null && "path" in root && root.path === "/usr";
     }));
+    assert.equal(artifact.data.commandEnvMode, "clean");
+    assert.deepEqual(artifact.data.commandEnv, {
+      PATH: DEFAULT_COMMAND_PATH,
+    });
     assert.equal(artifact.warnings[0].code, "NATIVE_BACKEND_HOST_PLATFORM_MISMATCH");
   } finally {
     rmSync(workspace, { recursive: true, force: true });

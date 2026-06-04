@@ -34,7 +34,7 @@ The `0.1.x` npm CLI executes Linux bubblewrap on Linux and macOS Seatbelt on mac
 
 Native planned artifacts are backend-specific:
 
-- `macos-seatbelt-sbpl-profile`: planned `/usr/bin/sandbox-exec` invocation, generated SBPL profile text, read/write roots, backend runtime read roots, network deny state, and analyzer effects.
+- `macos-seatbelt-sbpl-profile`: planned `/usr/bin/sandbox-exec` invocation, generated SBPL profile text, clean command env, read/write roots, backend runtime read roots, network deny state, and analyzer effects.
 - `windows-native-token-acl-plan`: planned runner protocol, clean command env, token mode, ACL roots, network block state, process/resource limits, and analyzer effects.
 
 ## Boundary

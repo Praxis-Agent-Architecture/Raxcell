@@ -380,6 +380,8 @@ Native planned artifact formats:
 - `macos-seatbelt-sbpl-profile`
   - `arguments`: planned `/usr/bin/sandbox-exec -p <profile> -- <argv...>`.
   - `data.profile`: generated SBPL profile text.
+  - `data.commandEnvMode`: `clean`.
+  - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
   - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
   - `data.runtimeRoots`: backend-runtime read roots added so Seatbelt can execute system tools and libraries; these are not upper-runtime policy grants.
   - `data.networkDenied`: backend network intent.
