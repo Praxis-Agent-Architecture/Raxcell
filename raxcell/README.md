@@ -1,36 +1,44 @@
 # Raxcell Rust Workspace
 
-This workspace contains the Rust implementation of the Raxcell execution-enforcement sandbox SDK.
+This directory contains the Rust workspace that was extracted during the early Raxcell sandbox work.
+
+The active npm-facing integration path for `0.1.x` is currently the TypeScript package in `raxcell/sdk`. The Rust crates remain useful as protocol and backend research material, especially for future native backend work.
 
 ## Crates
 
-- `raxcell-protocol`: stable JSON protocol types.
+- `raxcell-protocol`: JSON protocol types.
 - `raxcell-core`: backend dispatch, policy resolution, prepare/run logic.
 - `raxcell-cli`: CLI and stdio JSON-RPC worker.
 
-## Linux Backend
+## Current Role
 
-The `linux-bubblewrap` backend is usable in `0.1.0`.
+For `@praxis-ai/raxcell@0.1.5`, the executable package path is:
 
-It supports:
+```text
+raxcell/sdk -> @praxis-ai/raxcell -> raxcell CLI -> linux-bubblewrap
+```
+
+The Rust workspace is not the published npm CLI. Treat it as a retained lower-level implementation track while the TypeScript package carries the current Praxis/Raxode integration.
+
+## Linux Backend Notes
+
+The Rust workspace contains Linux bubblewrap backend code and fixtures for:
 
 - declared filesystem read/write roots;
-- network deny;
-- timeout;
 - cwd coverage checks;
-- explicit `policyGrants`;
-- `filesystemLowering` reports;
-- `backendArtifacts` with full bubblewrap argv from `prepareRun`.
+- explicit policy grants;
+- network deny;
+- timeout handling;
+- filesystem lowering reports;
+- backend artifacts with bubblewrap argv.
 
-## Native Backends
+The npm CLI has the current production-facing Linux behavior, including shell filesystem effect analysis and host-visible writable grants.
 
-macOS Seatbelt and Windows native backend families are protocol-visible.
+## Native Backend Notes
 
-Current behavior:
+macOS Seatbelt and Windows native backend families are protocol-visible in the broader Raxcell contract.
 
-- fail closed on unsupported hosts;
-- source-level lowering artifact models exist for future native runner attachment;
-- no macOS or Windows command execution is enabled in this Linux-first `0.1.0` stage.
+The Rust workspace includes source-level lowering concepts for native backends, but `0.1.x` npm releases do not execute macOS or Windows native runners yet.
 
 ## Verify
 
