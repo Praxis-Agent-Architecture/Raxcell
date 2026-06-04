@@ -414,6 +414,7 @@ The npm package exports this stdin shape as `WindowsRunnerRunRequest`; runner im
 ```
 
 It must return `raxcell.runResult.v1` JSON on stdout and keep human/debug output on stderr.
+The returned `backend` must match the prepared Windows backend. Raxcell rejects mismatched runner responses as protocol errors. If the runner omits `filesystemLowering` or `capabilityReport`, Raxcell overlays the prepared execution facts before returning the final `raxcell.runResult.v1` to Praxis.
 
 ## Installation From Local Tarball
 

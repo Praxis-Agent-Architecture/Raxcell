@@ -1285,7 +1285,11 @@ function parsePreparedRunResultJson(input: {
   }
 
   try {
-    return parseRunnerRunResponse(input.stdout);
+    return parseRunnerRunResponse(input.stdout, {
+      backend: input.prepared.response.backend,
+      filesystemLowering: input.prepared.response.filesystemLowering ?? null,
+      capabilityReport: input.prepared.response.capabilityReport,
+    });
   } catch (error) {
     const message = String(error instanceof Error ? error.message : error);
     return {

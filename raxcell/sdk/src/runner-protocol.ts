@@ -1,6 +1,20 @@
-import type { RunResponse } from "./types.js";
+import type {
+  BackendFamily,
+  FileSystemLoweringReport,
+  ProbeResponse,
+  RunResponse,
+} from "./types.js";
 
-export function parseRunnerRunResponse(stdout: string): RunResponse {
+export type RunnerRunResponseContext = {
+  backend: BackendFamily | null;
+  filesystemLowering: FileSystemLoweringReport | null;
+  capabilityReport: ProbeResponse | null;
+};
+
+export function parseRunnerRunResponse(
+  stdout: string,
+  context?: RunnerRunResponseContext,
+): RunResponse {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -12,7 +26,18 @@ export function parseRunnerRunResponse(stdout: string): RunResponse {
     throw new Error("runner response kind must be raxcell.runResult.v1");
   }
 
-  return parsed as RunResponse;
+  const response = parsed as RunResponse;
+  if (!context) {
+    return response;
+  }
+  if (response.backend !== context.backend) {
+    throw new Error(`runner response backend must match prepared backend ${context.backend}`);
+  }
+  return {
+    ...response,
+    filesystemLowering: response.filesystemLowering ?? context.filesystemLowering,
+    capabilityReport: response.capabilityReport ?? context.capabilityReport,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

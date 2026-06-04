@@ -67,6 +67,82 @@ test("runner protocol parser accepts raxcell run result JSON", () => {
   assert.deepEqual(parseRunnerRunResponse(JSON.stringify(response)), response);
 });
 
+test("runner protocol parser overlays prepared execution facts", () => {
+  const runnerResponse: RunResponse = {
+    kind: "raxcell.runResult.v1",
+    ok: true,
+    backend: "windows-native",
+    exitCode: 0,
+    stdout: "runner stdout",
+    stderr: "",
+    timedOut: false,
+    denial: null,
+    policyDecision: null,
+    environmentGap: null,
+    fallback: null,
+    capabilityReport: null,
+  };
+  const filesystemLowering = {
+    declaredRoots: [
+      { path: "C:\\workspace", access: "write" as const, source: "declared" as const },
+    ],
+    runtimeRoots: [],
+    policyGrants: [],
+    warnings: [],
+  };
+  const capabilityReport: ProbeResponse = {
+    kind: "raxcell.probeResult.v1",
+    ready: true,
+    selectedBackend: "windows-native",
+    supports: {},
+    limits: [],
+    weaknesses: [],
+    missing: [],
+    nextActions: [],
+    publicSafeMessage: "Windows native runner is attached.",
+  };
+
+  assert.deepEqual(
+    parseRunnerRunResponse(JSON.stringify(runnerResponse), {
+      backend: "windows-native",
+      filesystemLowering,
+      capabilityReport,
+    }),
+    {
+      ...runnerResponse,
+      filesystemLowering,
+      capabilityReport,
+    },
+  );
+});
+
+test("runner protocol parser rejects backend mismatches", () => {
+  const runnerResponse: RunResponse = {
+    kind: "raxcell.runResult.v1",
+    ok: true,
+    backend: "host-observed",
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    timedOut: false,
+    denial: null,
+    policyDecision: null,
+    environmentGap: null,
+    filesystemLowering: null,
+    fallback: null,
+    capabilityReport: null,
+  };
+
+  assert.throws(
+    () => parseRunnerRunResponse(JSON.stringify(runnerResponse), {
+      backend: "windows-native",
+      filesystemLowering: null,
+      capabilityReport: null,
+    }),
+    /runner response backend must match prepared backend windows-native/,
+  );
+});
+
 test("runner protocol parser rejects non-run-result stdout", () => {
   assert.throws(
     () => parseRunnerRunResponse("plain command stdout"),
