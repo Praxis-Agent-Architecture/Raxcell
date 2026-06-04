@@ -5,7 +5,7 @@ import { dirname, isAbsolute, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellEffects, type ShellEffect } from "./shell-effects.js";
-import { buildPreparedSpawnEnv, type SpawnEnvMode } from "./spawn-env.js";
+import { buildPreparedSpawnEnv, buildSandboxCommandEnv, type SpawnEnvMode } from "./spawn-env.js";
 import type {
   BackendFamily,
   BackendExplanation,
@@ -1293,10 +1293,7 @@ function buildBwrapArgs(
   request: RunRequest,
   filesystemLowering: FileSystemLoweringReport,
 ): string[] {
-  const env = {
-    PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    ...(request.command.env ?? {}),
-  };
+  const env = buildSandboxCommandEnv(request.command.env);
   const args = [
     "--die-with-parent",
     "--unshare-pid",

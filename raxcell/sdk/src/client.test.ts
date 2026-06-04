@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { RaxcellClient } from "./client.js";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellScript } from "./shell-effects.js";
-import { buildPreparedSpawnEnv } from "./spawn-env.js";
+import { DEFAULT_COMMAND_PATH, buildPreparedSpawnEnv } from "./spawn-env.js";
 import type {
   ExplainBackendResponse,
   PolicyPack,
@@ -36,6 +36,9 @@ test("clean prepared spawn env does not inherit host environment", () => {
   };
 
   assert.deepEqual(buildPreparedSpawnEnv(requestEnv, "clean", hostEnv), requestEnv);
+  assert.deepEqual(buildPreparedSpawnEnv(undefined, "clean", hostEnv), {
+    PATH: DEFAULT_COMMAND_PATH,
+  });
   assert.deepEqual(buildPreparedSpawnEnv(requestEnv, "inherit", hostEnv), {
     ...hostEnv,
     ...requestEnv,
