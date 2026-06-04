@@ -131,6 +131,10 @@ process.stdin.on("end", () => {
 
 test("cli resolves shell redirection relative paths against command cwd", () => {
   const workspace = mkdtempSync(join(tmpdir(), "raxcell-relative-path-"));
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexit 0\n");
+  chmodSync(fakeBwrap, 0o755);
   const request: RunRequest = {
     ...sampleRunRequest(),
     command: {
@@ -155,6 +159,10 @@ test("cli resolves shell redirection relative paths against command cwd", () => 
   try {
     const result = spawnSync(cliPath, ["prepare-run"], {
       encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
       input: JSON.stringify(request),
     });
     assert.equal(result.status, 0, result.stderr);
@@ -163,6 +171,7 @@ test("cli resolves shell redirection relative paths against command cwd", () => 
     assert.equal(response.policyDecision, null);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
   }
 });
 
