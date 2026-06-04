@@ -393,6 +393,7 @@ Native planned artifact formats:
   - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
   - `data.runtimeRoots`: backend-runtime read roots added so Seatbelt can execute system tools and libraries; these are not upper-runtime policy grants.
   - `data.networkDenied`: backend network intent.
+  - `data.networkMode`: common audit value, `deny` or `allow`.
   - `data.timeoutMs`: parent-enforced timeout for the spawned `sandbox-exec` process.
   - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
 - `windows-native-token-acl-plan`
@@ -405,6 +406,7 @@ Native planned artifact formats:
   - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
   - `data.aclRoots`: planned filesystem ACL roots; Windows-like paths such as `C:\workspace` keep Windows path shape even when a non-Windows host is only producing planned facts.
   - `data.networkBlocked`: WFP/network intent.
+  - `data.networkMode`: common audit value, `deny` or `allow`.
   - `data.timeoutMs`: parent-enforced timeout that the Windows runner should mirror in its Job Object / child process management.
   - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
 
@@ -425,6 +427,7 @@ The npm package exports this stdin shape as `WindowsRunnerRunRequest`; runner im
   "tokenMode": "writable-roots-capability",
   "aclRoots": [],
   "networkBlocked": true,
+  "networkMode": "deny",
   "timeoutMs": 1000
 }
 ```

@@ -601,6 +601,7 @@ function prepareLinux(request: RunRequest): PreparedBackendRun {
       arguments: [bwrapExecutable, ...bwrapArgs],
       data: {
         executable: bwrapExecutable,
+        networkMode: networkModeForRequest(request),
       },
       warnings: filesystemLowering.warnings,
     },
@@ -921,6 +922,7 @@ function plannedMacosSeatbeltArtifact(
       writeRoots: loweredRootPaths(filesystemLowering, "write"),
       runtimeRoots: filesystemLowering.runtimeRoots,
       networkDenied: request.enforcement.network === "deny",
+      networkMode: networkModeForRequest(request),
       timeoutMs: getTimeoutMs(request),
       processLimits: request.enforcement.process ?? {},
       resourceLimits: request.enforcement.resources ?? {},
@@ -991,6 +993,7 @@ function plannedWindowsNativeArtifact(
         : "read-only-capability",
       aclRoots,
       networkBlocked: request.enforcement.network === "deny",
+      networkMode: networkModeForRequest(request),
       timeoutMs: getTimeoutMs(request),
       processLimits: request.enforcement.process ?? {},
       resourceLimits: request.enforcement.resources ?? {},
@@ -1056,6 +1059,7 @@ function windowsRunnerRequest(
     tokenMode: plannedWindowsTokenMode(filesystemLowering),
     aclRoots: plannedWindowsAclRoots(filesystemLowering),
     networkBlocked: request.enforcement.network === "deny",
+    networkMode: networkModeForRequest(request),
     timeoutMs: getTimeoutMs(request),
   };
 }
@@ -1690,6 +1694,10 @@ function getTimeoutMs(request: RunRequest): number {
   return typeof timeoutMs === "number" && Number.isFinite(timeoutMs)
     ? timeoutMs
     : 0;
+}
+
+function networkModeForRequest(request: RunRequest): "allow" | "deny" {
+  return request.enforcement.network === "deny" ? "deny" : "allow";
 }
 
 function findExecutable(name: string): string | null {

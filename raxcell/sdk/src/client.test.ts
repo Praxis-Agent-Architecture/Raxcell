@@ -460,6 +460,7 @@ test("cli resolves shell redirection relative paths against command cwd", () => 
     const response = JSON.parse(result.stdout) as PrepareRunResponse;
     assert.equal(response.ok, true);
     assert.equal(response.policyDecision, null);
+    assert.equal(response.backendArtifacts[0].data.networkMode, "deny");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
     rmSync(fakeBinDir, { recursive: true, force: true });
@@ -975,6 +976,7 @@ test("prepare-run for unattached native backend returns environment facts and pl
     });
     assert.equal(response.backendArtifacts[0].data.tokenMode, "writable-roots-capability");
     assert.equal(response.backendArtifacts[0].data.networkBlocked, true);
+    assert.equal(response.backendArtifacts[0].data.networkMode, "deny");
     assert.equal(response.backendArtifacts[0].data.timeoutMs, 1000);
     assert.deepEqual(response.backendArtifacts[0].data.aclRoots, [
       {
@@ -1071,6 +1073,7 @@ test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () 
     assert.equal(artifact.data.writeGrantMaterialization, "raxcell-precreate");
     assert.match(String(artifact.data.profile), /\(deny default\)/);
     assert.match(String(artifact.data.profile), /\(deny network\*\)/);
+    assert.equal(artifact.data.networkMode, "deny");
     assert.match(String(artifact.data.profile), /\(allow file-read\* \(literal "\/usr"\) \(subpath "\/usr"\)\)/);
     assert.deepEqual(artifact.data.readRoots, [workspace]);
     assert.deepEqual(artifact.data.writeRoots, []);
@@ -1425,11 +1428,13 @@ test("windows runner request type exposes native runner protocol surface", () =>
       },
     ],
     networkBlocked: true,
+    networkMode: "deny",
   };
 
   assert.equal(request.kind, "raxcell.windowsRunner.run.v1");
   assert.equal(request.commandEnvMode, "clean");
   assert.equal(request.command.env.PATH, DEFAULT_COMMAND_PATH);
+  assert.equal(request.networkMode, "deny");
 });
 
 test("run response type exposes filesystem lowering report", () => {
