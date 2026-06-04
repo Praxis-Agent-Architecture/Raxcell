@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellEffects, type ShellEffect } from "./shell-effects.js";
 import type {
   BackendFamily,
@@ -34,6 +35,7 @@ type PreparedBackendRun = {
   cwd?: string;
   env?: Record<string, string>;
   stdin?: string | null;
+  outputMode?: "command" | "run-result-json";
 };
 
 type AllowedRoot = {
@@ -869,6 +871,7 @@ function prepareWindowsNative(
     executable: runner,
     args: ["run"],
     stdin: JSON.stringify(runnerRequest),
+    outputMode: "run-result-json",
   };
 }
 
@@ -1172,6 +1175,16 @@ function spawnPreparedCommand(
       if (timer) {
         clearTimeout(timer);
       }
+      if (prepared.outputMode === "run-result-json") {
+        resolvePromise(parsePreparedRunResultJson({
+          stdout,
+          stderr,
+          timedOut,
+          exitCode: timedOut ? null : code,
+          prepared,
+        }));
+        return;
+      }
       resolvePromise({
         kind: "raxcell.runResult.v1",
         ok: true,
@@ -1203,6 +1216,53 @@ function spawnPreparedCommand(
     });
     child.stdin.end(prepared.stdin ?? request.command.stdin ?? "");
   });
+}
+
+function parsePreparedRunResultJson(input: {
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  exitCode: number | null;
+  prepared: PreparedBackendRun;
+}): RunResponse {
+  if (input.timedOut) {
+    return {
+      kind: "raxcell.runResult.v1",
+      ok: false,
+      backend: input.prepared.response.backend,
+      exitCode: null,
+      stdout: input.stdout,
+      stderr: input.stderr,
+      timedOut: true,
+      denial: denial("RUNNER_TIMED_OUT", "Native runner timed out."),
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering: input.prepared.response.filesystemLowering,
+      fallback: null,
+      capabilityReport: input.prepared.response.capabilityReport,
+    };
+  }
+
+  try {
+    return parseRunnerRunResponse(input.stdout);
+  } catch (error) {
+    const message = String(error instanceof Error ? error.message : error);
+    return {
+      kind: "raxcell.runResult.v1",
+      ok: false,
+      backend: input.prepared.response.backend,
+      exitCode: input.exitCode,
+      stdout: input.stdout,
+      stderr: input.stderr || message,
+      timedOut: false,
+      denial: denial("RUNNER_PROTOCOL_ERROR", message),
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering: input.prepared.response.filesystemLowering,
+      fallback: null,
+      capabilityReport: input.prepared.response.capabilityReport,
+    };
+  }
 }
 
 function buildBwrapArgs(

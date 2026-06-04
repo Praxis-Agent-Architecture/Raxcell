@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RaxcellClient } from "./client.js";
+import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellScript } from "./shell-effects.js";
 import type {
   ExplainBackendResponse,
@@ -22,6 +23,37 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = resolve(testDir, "../package.json");
 const cliPath = resolve(testDir, "cli.js");
 const hasBwrap = spawnSync("which", ["bwrap"]).status === 0;
+
+test("runner protocol parser accepts raxcell run result JSON", () => {
+  const response: RunResponse = {
+    kind: "raxcell.runResult.v1",
+    ok: true,
+    backend: "windows-native",
+    exitCode: 7,
+    stdout: "command stdout",
+    stderr: "command stderr",
+    timedOut: false,
+    denial: null,
+    policyDecision: null,
+    environmentGap: null,
+    filesystemLowering: null,
+    fallback: null,
+    capabilityReport: null,
+  };
+
+  assert.deepEqual(parseRunnerRunResponse(JSON.stringify(response)), response);
+});
+
+test("runner protocol parser rejects non-run-result stdout", () => {
+  assert.throws(
+    () => parseRunnerRunResponse("plain command stdout"),
+    /runner stdout is not valid JSON/,
+  );
+  assert.throws(
+    () => parseRunnerRunResponse(JSON.stringify({ kind: "wrong.kind" })),
+    /runner response kind must be raxcell.runResult.v1/,
+  );
+});
 
 test("shell effect analyzer classifies common filesystem commands", () => {
   const cwd = "/workspace";
