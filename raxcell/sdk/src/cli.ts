@@ -27,10 +27,12 @@ type Denial = {
   publicSafe: boolean;
 };
 
-type PreparedLinuxRun = {
+type PreparedBackendRun = {
   response: PrepareRunResponse;
-  bwrapExecutable: string | null;
-  bwrapArgs: string[];
+  executable: string | null;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string>;
 };
 
 type AllowedRoot = {
@@ -232,6 +234,9 @@ function probeBackend(preference: BackendFamily[] = []): ProbeResponse {
   if (selectedBackend === "linux-bubblewrap") {
     return probeLinux();
   }
+  if (selectedBackend === "macos-seatbelt") {
+    return probeMacosSeatbelt();
+  }
   return probeUnattachedNativeBackend(selectedBackend);
 }
 
@@ -277,7 +282,7 @@ function probeLinux(): ProbeResponse {
       timeout: "partial",
     },
     limits: [
-      "The 0.1.x npm CLI implements Linux bubblewrap only.",
+      "The 0.1.x npm CLI implements Linux bubblewrap and macOS Seatbelt execution.",
       "Upper runtimes own policy grants and approval.",
     ],
     weaknesses: [],
@@ -286,6 +291,46 @@ function probeLinux(): ProbeResponse {
     publicSafeMessage: ready
       ? "linux-bubblewrap is ready"
       : "linux-bubblewrap is not ready on this host",
+  };
+}
+
+function probeMacosSeatbelt(): ProbeResponse {
+  const isMacos = process.platform === "darwin";
+  const executable = "/usr/bin/sandbox-exec";
+  const exists = existsSync(executable);
+  const ready = isMacos && exists;
+  const missing: string[] = [];
+  const nextActions: string[] = [];
+
+  if (!isMacos) {
+    missing.push("darwin");
+    nextActions.push("Route this request to a darwin host or select a backend available on this host.");
+  }
+  if (isMacos && !exists) {
+    missing.push(executable);
+    nextActions.push("Install or restore /usr/bin/sandbox-exec before executing macos-seatbelt.");
+  }
+
+  return {
+    kind: "raxcell.probeResult.v1",
+    ready,
+    selectedBackend: "macos-seatbelt",
+    supports: {
+      filesystem: ready ? "partial" : "unknown",
+      network: ready ? "partial" : "unknown",
+      process: ready ? "partial" : "unknown",
+      timeout: "partial",
+    },
+    limits: [
+      "macOS Seatbelt uses sandbox-exec SBPL profiles.",
+      "Raxcell reports policy gaps but does not approve them.",
+    ],
+    weaknesses: [],
+    missing,
+    nextActions,
+    publicSafeMessage: ready
+      ? "macos-seatbelt is ready"
+      : "macos-seatbelt is not ready on this host",
   };
 }
 
@@ -334,7 +379,7 @@ function explainBackend(
       ],
       runtimeRoots: runtimeLoweredRoots(),
       limits: [
-        "0.1.x supports Linux bubblewrap execution only",
+        "0.1.x supports Linux bubblewrap and macOS Seatbelt execution",
         "Raxcell reports policy gaps but does not approve them",
       ],
       publicSafeMessage: probe.publicSafeMessage,
@@ -351,8 +396,8 @@ function explainBackend(
       ],
       runtimeRoots: [],
       limits: [
-        "macOS Seatbelt is protocol-visible but the 0.1.x npm CLI has no attached runner.",
-        "Raxcell will fail closed until native execution is attached.",
+        "macOS Seatbelt executes through /usr/bin/sandbox-exec on macOS hosts.",
+        "Raxcell fails closed on non-macOS hosts or when sandbox-exec is unavailable.",
       ],
       publicSafeMessage: probe.publicSafeMessage,
     };
@@ -389,15 +434,18 @@ function explainBackend(
   };
 }
 
-function prepareRun(request: RunRequest): PreparedLinuxRun {
+function prepareRun(request: RunRequest): PreparedBackendRun {
   const backend = selectBackend(request.backendPreference);
   if (backend === "linux-bubblewrap") {
     return prepareLinux(request);
   }
+  if (backend === "macos-seatbelt") {
+    return prepareMacosSeatbelt(request);
+  }
   return prepareUnattachedNative(request, backend);
 }
 
-function prepareLinux(request: RunRequest): PreparedLinuxRun {
+function prepareLinux(request: RunRequest): PreparedBackendRun {
   const capabilityReport = probeLinux();
   const bwrapExecutable = findExecutable("bwrap") ?? findExecutable("bubblewrap");
   const backend: BackendFamily | null = capabilityReport.ready ? "linux-bubblewrap" : null;
@@ -425,8 +473,8 @@ function prepareLinux(request: RunRequest): PreparedLinuxRun {
         backendArtifacts: [],
         capabilityReport,
       },
-      bwrapExecutable: null,
-      bwrapArgs: [],
+      executable: null,
+      args: [],
     };
   }
 
@@ -444,8 +492,8 @@ function prepareLinux(request: RunRequest): PreparedLinuxRun {
         backendArtifacts: [],
         capabilityReport,
       },
-      bwrapExecutable,
-      bwrapArgs: [],
+      executable: bwrapExecutable,
+      args: [],
     };
   }
 
@@ -463,8 +511,8 @@ function prepareLinux(request: RunRequest): PreparedLinuxRun {
         backendArtifacts: [],
         capabilityReport,
       },
-      bwrapExecutable,
-      bwrapArgs: [],
+      executable: bwrapExecutable,
+      args: [],
     };
   }
 
@@ -482,8 +530,8 @@ function prepareLinux(request: RunRequest): PreparedLinuxRun {
         backendArtifacts: [],
         capabilityReport,
       },
-      bwrapExecutable,
-      bwrapArgs: [],
+      executable: bwrapExecutable,
+      args: [],
     };
   }
 
@@ -512,15 +560,131 @@ function prepareLinux(request: RunRequest): PreparedLinuxRun {
       backendArtifacts,
       capabilityReport,
     },
-    bwrapExecutable,
-    bwrapArgs,
+    executable: bwrapExecutable,
+    args: bwrapArgs,
+  };
+}
+
+function prepareMacosSeatbelt(request: RunRequest): PreparedBackendRun {
+  const capabilityReport = probeMacosSeatbelt();
+  const executable = "/usr/bin/sandbox-exec";
+  const backend: BackendFamily = "macos-seatbelt";
+  const filesystemLowering = lowerFilesystem(request, backend);
+  const plannedArtifact = plannedMacosSeatbeltArtifact(request, filesystemLowering);
+
+  if (!capabilityReport.ready) {
+    const gap = nativeBackendEnvironmentGap(backend);
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: denial("BACKEND_UNAVAILABLE", gap.publicSafeMessage),
+        policyDecision: null,
+        environmentGap: gap,
+        filesystemLowering,
+        backendArtifacts: [plannedArtifact],
+        capabilityReport,
+      },
+      executable: null,
+      args: [],
+    };
+  }
+
+  const cwdDecision = cwdPolicyDecision(request, filesystemLowering.policyGrants);
+  if (cwdDecision) {
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: null,
+        policyDecision: cwdDecision,
+        environmentGap: null,
+        filesystemLowering,
+        backendArtifacts: [plannedArtifact],
+        capabilityReport,
+      },
+      executable,
+      args: [],
+    };
+  }
+
+  const environmentGap = dynamicPathEnvironmentGap(request);
+  if (environmentGap) {
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: null,
+        policyDecision: null,
+        environmentGap,
+        filesystemLowering,
+        backendArtifacts: [plannedArtifact],
+        capabilityReport,
+      },
+      executable,
+      args: [],
+    };
+  }
+
+  const pathDecision = argvPathPolicyDecision(request, filesystemLowering.policyGrants);
+  if (pathDecision) {
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: null,
+        policyDecision: pathDecision,
+        environmentGap: null,
+        filesystemLowering,
+        backendArtifacts: [plannedArtifact],
+        capabilityReport,
+      },
+      executable,
+      args: [],
+    };
+  }
+
+  const profile = macosSeatbeltProfile(request, filesystemLowering);
+  const args = ["-p", profile, "--", ...request.command.argv];
+  const backendArtifacts = [
+    {
+      ...plannedArtifact,
+      arguments: [executable, ...args],
+      data: {
+        ...plannedArtifact.data,
+        attached: true,
+      },
+      warnings: [],
+    },
+  ];
+
+  return {
+    response: {
+      kind: "raxcell.prepareRunResult.v1",
+      ok: true,
+      backend,
+      denial: null,
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering,
+      backendArtifacts,
+      capabilityReport,
+    },
+    executable,
+    args,
+    cwd: request.command.cwd,
+    env: request.command.env,
   };
 }
 
 function prepareUnattachedNative(
   request: RunRequest,
   backend: BackendFamily,
-): PreparedLinuxRun {
+): PreparedBackendRun {
   const capabilityReport = probeUnattachedNativeBackend(backend);
   const filesystemLowering = lowerFilesystem(request, backend);
   const gap: EnvironmentGap = nativeBackendEnvironmentGap(backend);
@@ -536,8 +700,8 @@ function prepareUnattachedNative(
       backendArtifacts: [plannedNativeArtifact(backend, request, filesystemLowering)],
       capabilityReport,
     },
-    bwrapExecutable: null,
-    bwrapArgs: [],
+    executable: null,
+    args: [],
   };
 }
 
@@ -659,7 +823,7 @@ function sbplString(value: string): string {
 async function runBackend(request: RunRequest): Promise<RunResponse> {
   const prepared = prepareRun(request);
 
-  if (!prepared.response.ok || prepared.response.policyDecision || !prepared.bwrapExecutable) {
+  if (!prepared.response.ok || prepared.response.policyDecision || !prepared.executable) {
     return {
       kind: "raxcell.runResult.v1",
       ok: false,
@@ -698,7 +862,7 @@ async function runBackend(request: RunRequest): Promise<RunResponse> {
     };
   }
 
-  return spawnBubblewrap(request, prepared);
+  return spawnPreparedCommand(request, prepared);
 }
 
 function nativeBackendEnvironmentGap(backend: BackendFamily): EnvironmentGap {
@@ -740,13 +904,15 @@ function nativeRunnerDependency(backend: BackendFamily): string {
   return "windows-native-runner";
 }
 
-function spawnBubblewrap(
+function spawnPreparedCommand(
   request: RunRequest,
-  prepared: PreparedLinuxRun,
+  prepared: PreparedBackendRun,
 ): Promise<RunResponse> {
   return new Promise((resolvePromise) => {
-    const child = spawn(prepared.bwrapExecutable!, prepared.bwrapArgs, {
+    const child = spawn(prepared.executable!, prepared.args, {
       stdio: ["pipe", "pipe", "pipe"],
+      cwd: prepared.cwd,
+      env: prepared.env ? { ...process.env, ...prepared.env } : undefined,
     });
     const timeoutMs = getTimeoutMs(request);
     let stdout = "";
@@ -766,7 +932,7 @@ function spawnBubblewrap(
       resolvePromise({
         kind: "raxcell.runResult.v1",
         ok: false,
-        backend: "linux-bubblewrap",
+        backend: prepared.response.backend,
         exitCode: null,
         stdout,
         stderr: stderr || String(error),
@@ -786,7 +952,7 @@ function spawnBubblewrap(
       resolvePromise({
         kind: "raxcell.runResult.v1",
         ok: true,
-        backend: "linux-bubblewrap",
+        backend: prepared.response.backend,
         exitCode: timedOut ? null : code,
         stdout,
         stderr,

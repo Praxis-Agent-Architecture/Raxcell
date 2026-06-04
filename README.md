@@ -10,16 +10,18 @@ Raxcell is not Praxis-specific. Praxis is the first target runtime, but the cont
 
 Current npm package: `@praxis-ai/raxcell@0.1.5`
 
-Linux is usable today through the TypeScript CLI package:
+Linux and macOS are executable today through the TypeScript CLI package:
 
 - `linux-bubblewrap` executes commands through bubblewrap.
+- `macos-seatbelt` executes commands through `/usr/bin/sandbox-exec` on macOS hosts.
 - Filesystem read/write roots are declared per request.
 - Explicit `policyGrants` can add host path access after an upper runtime has approved it.
 - Write grants are mounted so approved external writes land on the host, not in a sandbox shadow path.
-- Network deny uses bubblewrap network isolation.
+- Network deny uses bubblewrap network isolation on Linux and SBPL network denial on macOS.
 - Timeouts are enforced by Raxcell process management.
 - `prepareRun` returns `filesystemLowering`, analyzer effects, and backend-specific `backendArtifacts`.
 - Linux `backendArtifacts` include the complete bubblewrap argv.
+- macOS `backendArtifacts` include the generated Seatbelt profile and sandbox-exec argv.
 
 macOS and Windows are protocol-visible native backend families:
 
@@ -28,7 +30,7 @@ macOS and Windows are protocol-visible native backend families:
 - `windows-unelevated`
 - `windows-native`
 
-The `0.1.x` npm CLI only executes the Linux bubblewrap backend. macOS and Windows preferences are still useful for `probe`, `explain-backend`, and fail-closed `prepare-run` responses: they return native capability facts, planned lowering artifacts, and environment gaps without pretending a native runner is attached.
+The `0.1.x` npm CLI executes Linux bubblewrap on Linux and macOS Seatbelt on macOS. Windows preferences are useful for `probe`, `explain-backend`, and fail-closed `prepare-run` responses: they return native capability facts, planned lowering artifacts, and environment gaps without pretending a Windows runner is attached.
 
 Native planned artifacts are backend-specific:
 
@@ -63,7 +65,7 @@ Praxis / Agent Harness
   -> policy middleware
   -> RaxcellClient
   -> raxcell CLI JSON stdin/stdout
-  -> linux-bubblewrap
+  -> linux-bubblewrap / macos-seatbelt / windows-native
 ```
 
 ## Install
@@ -232,7 +234,7 @@ Use `exitCode`, `stdout`, and `stderr` for command-level behavior. Use `ok: fals
 - `raxcell/sdk`: TypeScript npm package and Linux bubblewrap CLI.
 - `raxcell/sdk/src/types.ts`: JSON protocol types.
 - `raxcell/sdk/src/client.ts`: TypeScript client that spawns the CLI.
-- `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI and Linux bubblewrap runner.
+- `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI plus Linux bubblewrap and macOS Seatbelt runners.
 - `raxcell/sdk/src/shell-effects.ts`: shell filesystem effect analyzer.
 - `raxcell`: Rust workspace retained for protocol/backend research.
 - `specs/raxcell`: extraction plans and integration docs.

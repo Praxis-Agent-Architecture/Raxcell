@@ -58,7 +58,7 @@ For development against this repository, Praxis can point directly at the build 
 RAXCELL_BIN=/home/proview/Desktop/Praxis_series/development/Raxcell/raxcell/sdk/dist/cli.js
 ```
 
-The current package ships a TypeScript/Node CLI with a Linux bubblewrap runner. macOS and Windows native backends are protocol-visible through `probe`, `explain-backend`, and fail-closed `prepare-run` responses, but they do not yet have attached native runners.
+The current package ships a TypeScript/Node CLI with Linux bubblewrap and macOS Seatbelt runners. Windows native backends are protocol-visible through `probe`, `explain-backend`, and fail-closed `prepare-run` responses, but they do not yet have attached native runners.
 
 ## Core Methods
 
@@ -371,9 +371,9 @@ The protocol already exposes backend families:
 - `windows-elevated`
 - `windows-unelevated`
 
-Raxcell keeps macOS Seatbelt and Windows native runners out of the `0.1.5` npm CLI. They remain future backend work.
+Raxcell can execute `macos-seatbelt` on macOS hosts when `/usr/bin/sandbox-exec` is available. Windows native runners remain future backend work.
 
-When selected through `backendPreference`, these backends return native capability facts and planned lowering artifacts, then fail closed with `environmentGap.reason = "host-platform-mismatch"` or `environmentGap.reason = "native-backend-runner-unattached"`. They do not ask for approval, grant policy, or fall back to host execution.
+When selected through `backendPreference`, Windows backends return native capability facts and planned lowering artifacts, then fail closed with `environmentGap.reason = "host-platform-mismatch"` or `environmentGap.reason = "native-backend-runner-unattached"`. They do not ask for approval, grant policy, or fall back to host execution.
 
 Native planned artifact formats:
 
