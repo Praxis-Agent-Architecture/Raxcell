@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, normalize, resolve } from "node:path";
+import { dirname, isAbsolute, normalize, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellEffects, type ShellEffect } from "./shell-effects.js";
@@ -531,7 +531,7 @@ function prepareLinux(request: RunRequest): PreparedBackendRun {
     };
   }
 
-  const cwdDecision = cwdPolicyDecision(request, filesystemLowering.policyGrants);
+  const cwdDecision = cwdPolicyDecision(request, filesystemLowering.policyGrants, "linux-bubblewrap");
   if (cwdDecision) {
     return {
       response: {
@@ -550,7 +550,7 @@ function prepareLinux(request: RunRequest): PreparedBackendRun {
     };
   }
 
-  const environmentGap = dynamicPathEnvironmentGap(request);
+  const environmentGap = dynamicPathEnvironmentGap(request, "linux-bubblewrap");
   if (environmentGap) {
     return {
       response: {
@@ -648,7 +648,7 @@ function prepareMacosSeatbelt(request: RunRequest): PreparedBackendRun {
     };
   }
 
-  const cwdDecision = cwdPolicyDecision(request, filesystemLowering.policyGrants);
+  const cwdDecision = cwdPolicyDecision(request, filesystemLowering.policyGrants, backend);
   if (cwdDecision) {
     return {
       response: {
@@ -667,7 +667,7 @@ function prepareMacosSeatbelt(request: RunRequest): PreparedBackendRun {
     };
   }
 
-  const environmentGap = dynamicPathEnvironmentGap(request);
+  const environmentGap = dynamicPathEnvironmentGap(request, backend);
   if (environmentGap) {
     return {
       response: {
@@ -791,7 +791,7 @@ function prepareWindowsNative(
     };
   }
 
-  const cwdDecision = cwdPolicyDecision(request, filesystemLowering.policyGrants);
+  const cwdDecision = cwdPolicyDecision(request, filesystemLowering.policyGrants, backend);
   if (cwdDecision) {
     return {
       response: {
@@ -810,7 +810,7 @@ function prepareWindowsNative(
     };
   }
 
-  const environmentGap = dynamicPathEnvironmentGap(request);
+  const environmentGap = dynamicPathEnvironmentGap(request, backend);
   if (environmentGap) {
     return {
       response: {
@@ -1358,18 +1358,18 @@ function lowerFilesystem(
 ): FileSystemLoweringReport {
   const filesystem = request.enforcement.filesystem ?? {};
   const declaredRoots: LoweredRoot[] = [];
-  const policyGrants = normalizePolicyGrants(request.policyGrants ?? []);
+  const policyGrants = normalizePolicyGrants(request.policyGrants ?? [], backend);
 
   for (const path of filesystem.read ?? []) {
     declaredRoots.push({
-      path: normalizeAbsolute(path),
+      path: normalizeAbsoluteForBackend(path, backend),
       access: "read",
       source: "declared",
     });
   }
   for (const path of filesystem.write ?? []) {
     declaredRoots.push({
-      path: normalizeAbsolute(path),
+      path: normalizeAbsoluteForBackend(path, backend),
       access: "write",
       source: "declared",
     });
@@ -1387,7 +1387,10 @@ function lowerFilesystem(
     runtimeRoots: runtimeLoweredRootsForBackend(backend),
     policyGrants,
     warnings: [],
-    effects: analyzeShellEffects(request.command.argv, normalizeAbsolute(request.command.cwd)),
+    effects: analyzeShellEffects(
+      request.command.argv,
+      normalizeAbsoluteForBackend(request.command.cwd, backend),
+    ),
   };
 }
 
@@ -1443,10 +1446,10 @@ function collapseDeclaredRoots(roots: LoweredRoot[]): LoweredRoot[] {
   return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function normalizePolicyGrants(grants: PolicyGrant[]): PolicyGrant[] {
+function normalizePolicyGrants(grants: PolicyGrant[], backend: BackendFamily): PolicyGrant[] {
   return grants.map((grant) => ({
     ...grant,
-    path: normalizeAbsolute(grant.path),
+    path: normalizeAbsoluteForBackend(grant.path, backend),
   }));
 }
 
@@ -1457,9 +1460,10 @@ function uniquePaths(paths: string[]): string[] {
 function cwdPolicyDecision(
   request: RunRequest,
   policyGrants: PolicyGrant[],
+  backend: BackendFamily,
 ): PolicyDecisionRequired | null {
-  const cwd = normalizeAbsolute(request.command.cwd);
-  if (isAllowedPath(cwd, allowedRoots(request, policyGrants), "read")) {
+  const cwd = normalizeAbsoluteForBackend(request.command.cwd, backend);
+  if (isAllowedPath(cwd, allowedRoots(request, policyGrants, backend), "read", backend)) {
     return null;
   }
   return {
@@ -1475,10 +1479,13 @@ function argvPathPolicyDecision(
   policyGrants: PolicyGrant[],
   backend: BackendFamily,
 ): PolicyDecisionRequired | null {
-  const roots = allowedRoots(request, policyGrants);
+  const roots = allowedRoots(request, policyGrants, backend);
   const requirements = new Map<string, Set<"read" | "write">>();
 
-  for (const effect of analyzeShellEffects(request.command.argv, normalizeAbsolute(request.command.cwd))) {
+  for (const effect of analyzeShellEffects(
+    request.command.argv,
+    normalizeAbsoluteForBackend(request.command.cwd, backend),
+  )) {
     if (effect.warning === "shell-dynamic-path-unresolved") {
       continue;
     }
@@ -1495,10 +1502,10 @@ function argvPathPolicyDecision(
 
   for (const [path, accessSet] of requirements) {
     const missing: Array<"read" | "write"> = [];
-    if (accessSet.has("read") && !isAllowedPath(path, roots, "read")) {
+    if (accessSet.has("read") && !isAllowedPath(path, roots, "read", backend)) {
       missing.push("read");
     }
-    if (accessSet.has("write") && !isAllowedPath(path, roots, "write")) {
+    if (accessSet.has("write") && !isAllowedPath(path, roots, "write", backend)) {
       missing.push("write");
     }
     if (missing.length > 0) {
@@ -1513,10 +1520,10 @@ function argvPathPolicyDecision(
   return null;
 }
 
-function dynamicPathEnvironmentGap(request: RunRequest): EnvironmentGap | null {
+function dynamicPathEnvironmentGap(request: RunRequest, backend: BackendFamily): EnvironmentGap | null {
   const effect = analyzeShellEffects(
     request.command.argv,
-    normalizeAbsolute(request.command.cwd),
+    normalizeAbsoluteForBackend(request.command.cwd, backend),
   ).find((candidate) => candidate.warning === "shell-dynamic-path-unresolved");
   if (!effect) {
     return null;
@@ -1540,18 +1547,27 @@ function accessListForEffect(effect: ShellEffect): string[] {
 function allowedRoots(
   request: RunRequest,
   policyGrants: PolicyGrant[],
+  backend: BackendFamily,
 ): AllowedRoot[] {
   const filesystem = request.enforcement.filesystem ?? {};
   const roots: AllowedRoot[] = [];
   for (const path of filesystem.read ?? []) {
-    roots.push({ path: normalizeAbsolute(path), access: "read", source: "declared" });
+    roots.push({
+      path: normalizeAbsoluteForBackend(path, backend),
+      access: "read",
+      source: "declared",
+    });
   }
   for (const path of filesystem.write ?? []) {
-    roots.push({ path: normalizeAbsolute(path), access: "write", source: "declared" });
+    roots.push({
+      path: normalizeAbsoluteForBackend(path, backend),
+      access: "write",
+      source: "declared",
+    });
   }
   for (const grant of policyGrants) {
     roots.push({
-      path: normalizeAbsolute(grant.path),
+      path: normalizeAbsoluteForBackend(grant.path, backend),
       access: grant.access?.includes("write") ? "write" : "read",
       source: "policy-grant",
     });
@@ -1563,22 +1579,49 @@ function isAllowedPath(
   path: string,
   roots: AllowedRoot[],
   required: "read" | "write",
+  backend: BackendFamily,
 ): boolean {
   return roots.some((root) => {
     if (required === "write" && root.access !== "write") {
       return false;
     }
-    return path === root.path || path.startsWith(`${root.path}/`);
+    return isPathWithinRoot(path, root.path, backend);
   });
 }
 
 function isRuntimePath(path: string, backend: BackendFamily): boolean {
   return runtimeLoweredRootsForBackend(backend)
-    .some((root) => path === root.path || path.startsWith(`${root.path}/`));
+    .some((root) => isPathWithinRoot(path, root.path, backend));
 }
 
 function normalizeAbsolute(path: string): string {
   return normalize(isAbsolute(path) ? path : resolve(path));
+}
+
+function normalizeAbsoluteForBackend(path: string, backend: BackendFamily): string {
+  if (isWindowsNativeBackend(backend) && isWindowsPathLike(path)) {
+    return win32.normalize(win32.isAbsolute(path) ? path : win32.resolve(path));
+  }
+  return normalizeAbsolute(path);
+}
+
+function isPathWithinRoot(path: string, root: string, backend: BackendFamily): boolean {
+  if (isWindowsNativeBackend(backend) && (isWindowsPathLike(path) || isWindowsPathLike(root))) {
+    const normalizedPath = stripTrailingSeparators(win32.normalize(path)).toLowerCase();
+    const normalizedRoot = stripTrailingSeparators(win32.normalize(root)).toLowerCase();
+    return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}\\`);
+  }
+  const normalizedPath = stripTrailingSeparators(normalize(path));
+  const normalizedRoot = stripTrailingSeparators(normalize(root));
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function stripTrailingSeparators(path: string): string {
+  return path.replace(/[\\/]+$/, "");
+}
+
+function isWindowsPathLike(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.includes("\\");
 }
 
 function parentDirArgs(path: string): string[] {

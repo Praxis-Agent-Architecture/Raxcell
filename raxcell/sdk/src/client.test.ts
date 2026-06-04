@@ -963,6 +963,51 @@ test("prepare-run for unattached native backend returns environment facts and pl
   }
 });
 
+test("prepare-run for windows-native preserves Windows path facts on non-Windows hosts", () => {
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    backendPreference: ["windows-native"],
+    command: {
+      argv: ["cmd.exe", "/c", "type C:\\workspace\\input.txt > C:\\workspace\\output.txt"],
+      cwd: "C:\\workspace",
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: ["C:\\workspace"],
+        write: ["C:\\workspace"],
+      },
+    },
+  };
+
+  const result = spawnSync(cliPath, ["prepare-run"], {
+    encoding: "utf8",
+    input: JSON.stringify(request),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const response = JSON.parse(result.stdout) as PrepareRunResponse;
+  const artifact = response.backendArtifacts[0];
+
+  assert.equal(response.ok, false);
+  assert.equal(response.backend, "windows-native");
+  assert.equal(response.environmentGap?.reason, "host-platform-mismatch");
+  assert.deepEqual(artifact.data.aclRoots, [
+    {
+      path: "C:\\workspace",
+      access: "write",
+      source: "declared",
+    },
+  ]);
+  assert.ok(response.filesystemLowering?.effects?.some((effect) => {
+    return effect.path === "C:\\workspace\\input.txt" && effect.access === "read";
+  }));
+  assert.ok(response.filesystemLowering?.effects?.some((effect) => {
+    return effect.path === "C:\\workspace\\output.txt" && effect.access === "write";
+  }));
+});
+
 test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () => {
   const workspace = mkdtempSync(join(tmpdir(), "raxcell-macos-prepare-workspace-"));
   const request: RunRequest = {

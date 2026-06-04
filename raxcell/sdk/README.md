@@ -396,7 +396,7 @@ Native planned artifact formats:
   - `data.commandEnvMode`: `clean`.
   - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
   - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
-  - `data.aclRoots`: planned filesystem ACL roots.
+  - `data.aclRoots`: planned filesystem ACL roots; Windows-like paths such as `C:\workspace` keep Windows path shape even when a non-Windows host is only producing planned facts.
   - `data.networkBlocked`: WFP/network intent.
   - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
 
