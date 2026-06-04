@@ -21,6 +21,9 @@ import type {
   ProbeResponse,
   RunRequest,
   RunResponse,
+  WindowsRunnerAclRoot,
+  WindowsRunnerBackend,
+  WindowsRunnerRunRequest,
 } from "./types.js";
 
 type Denial = {
@@ -762,7 +765,7 @@ function prepareUnattachedNative(
 
 function prepareWindowsNative(
   request: RunRequest,
-  backend: BackendFamily,
+  backend: WindowsRunnerBackend,
 ): PreparedBackendRun {
   const capabilityReport = probeWindowsNative(backend);
   const runner = windowsNativeRunnerPath();
@@ -1011,9 +1014,9 @@ function nativeBackendWarning(backend: BackendFamily): { code: string; message: 
 
 function windowsRunnerRequest(
   request: RunRequest,
-  backend: BackendFamily,
+  backend: WindowsRunnerBackend,
   filesystemLowering: FileSystemLoweringReport,
-): Record<string, unknown> {
+): WindowsRunnerRunRequest {
   return {
     kind: "raxcell.windowsRunner.run.v1",
     backend,
@@ -1033,7 +1036,7 @@ function windowsRunnerRequest(
 
 function plannedWindowsTokenMode(
   filesystemLowering: FileSystemLoweringReport,
-): string {
+): WindowsRunnerRunRequest["tokenMode"] {
   return plannedWindowsAclRoots(filesystemLowering).some((root) => root.access === "write")
     ? "writable-roots-capability"
     : "read-only-capability";
@@ -1041,14 +1044,20 @@ function plannedWindowsTokenMode(
 
 function plannedWindowsAclRoots(
   filesystemLowering: FileSystemLoweringReport,
-): Array<{ path: string; access: string; source: string }> {
-  return filesystemLowering.declaredRoots
-    .filter((root) => root.access === "read" || root.access === "write")
-    .map((root) => ({
+): WindowsRunnerAclRoot[] {
+  return filesystemLowering.declaredRoots.flatMap((root) => {
+    if (root.access !== "read" && root.access !== "write") {
+      return [];
+    }
+    if (root.source !== "declared" && root.source !== "policy-grant") {
+      return [];
+    }
+    return [{
       path: root.path,
       access: root.access,
       source: root.source,
-    }));
+    }];
+  });
 }
 
 function sbplString(value: string): string {
@@ -1152,7 +1161,7 @@ function windowsNativeRunnerPath(): string | null {
   return findExecutable("raxcell-windows-runner");
 }
 
-function isWindowsNativeBackend(backend: BackendFamily | null): backend is BackendFamily {
+function isWindowsNativeBackend(backend: BackendFamily | null): backend is WindowsRunnerBackend {
   return (
     backend === "windows-native" ||
     backend === "windows-elevated" ||

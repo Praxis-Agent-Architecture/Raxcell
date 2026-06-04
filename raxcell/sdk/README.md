@@ -395,6 +395,8 @@ Native planned artifact formats:
 
 The Windows runner receives a JSON object on stdin:
 
+The npm package exports this stdin shape as `WindowsRunnerRunRequest`; runner implementations should pair it with `RunResponse` for stdout.
+
 ```json
 {
   "kind": "raxcell.windowsRunner.run.v1",

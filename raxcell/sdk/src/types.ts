@@ -158,6 +158,32 @@ export type RunRequest = {
   fallback: FallbackSpec;
 };
 
+export type WindowsRunnerBackend =
+  | "windows-native"
+  | "windows-elevated"
+  | "windows-unelevated";
+
+export type WindowsRunnerAclRoot = {
+  path: string;
+  access: "read" | "write";
+  source: "declared" | "policy-grant";
+};
+
+export type WindowsRunnerRunRequest = {
+  kind: "raxcell.windowsRunner.run.v1";
+  backend: WindowsRunnerBackend;
+  command: RunRequest["command"] & {
+    env: Record<string, string>;
+  };
+  commandEnvMode: "clean";
+  enforcement: EnforcementSpec;
+  action: RunRequest["action"];
+  filesystemLowering: FileSystemLoweringReport;
+  tokenMode: "read-only-capability" | "writable-roots-capability";
+  aclRoots: WindowsRunnerAclRoot[];
+  networkBlocked: boolean;
+};
+
 export type RunResponse = {
   kind: "raxcell.runResult.v1";
   ok: boolean;

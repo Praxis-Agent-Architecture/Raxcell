@@ -16,5 +16,8 @@ export type {
   ResolvedProfileResponse,
   RunRequest,
   RunResponse,
+  WindowsRunnerAclRoot,
+  WindowsRunnerBackend,
+  WindowsRunnerRunRequest,
 } from "./types.js";
 export type { ShellEffect, ShellEffectAccess } from "./shell-effects.js";

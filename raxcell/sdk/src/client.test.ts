@@ -18,6 +18,7 @@ import type {
   ResolveProfileRequest,
   RunRequest,
   RunResponse,
+  WindowsRunnerRunRequest,
 } from "./types.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -1155,6 +1156,63 @@ test("run request type exposes explicit policy grants", () => {
     },
   };
   assert.equal(request.policyGrants?.[0].reason, "cwd-outside-declared-roots");
+});
+
+test("windows runner request type exposes native runner protocol surface", () => {
+  const request: WindowsRunnerRunRequest = {
+    kind: "raxcell.windowsRunner.run.v1",
+    backend: "windows-native",
+    command: {
+      argv: ["cmd.exe", "/c", "echo hello"],
+      cwd: "C:\\workspace",
+      env: {
+        PATH: DEFAULT_COMMAND_PATH,
+      },
+      stdin: null,
+    },
+    commandEnvMode: "clean",
+    enforcement: {
+      profile: "workspace-write",
+      filesystem: {
+        read: ["C:\\workspace"],
+        write: ["C:\\workspace"],
+      },
+      network: "deny",
+      process: {},
+      resources: {},
+    },
+    action: {
+      actionId: "windows-runner-type",
+      ownerRuntime: "praxis",
+      intentLabel: "type-test",
+      metadata: {},
+    },
+    filesystemLowering: {
+      declaredRoots: [
+        {
+          path: "C:\\workspace",
+          access: "write",
+          source: "declared",
+        },
+      ],
+      runtimeRoots: [],
+      policyGrants: [],
+      warnings: [],
+    },
+    tokenMode: "writable-roots-capability",
+    aclRoots: [
+      {
+        path: "C:\\workspace",
+        access: "write",
+        source: "declared",
+      },
+    ],
+    networkBlocked: true,
+  };
+
+  assert.equal(request.kind, "raxcell.windowsRunner.run.v1");
+  assert.equal(request.commandEnvMode, "clean");
+  assert.equal(request.command.env.PATH, DEFAULT_COMMAND_PATH);
 });
 
 test("run response type exposes filesystem lowering report", () => {
