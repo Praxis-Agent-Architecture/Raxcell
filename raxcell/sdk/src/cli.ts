@@ -929,14 +929,14 @@ function macosSeatbeltProfile(
     "(allow file-read-metadata)",
   ];
   for (const root of uniquePaths(filesystemLowering.runtimeRoots.map((runtimeRoot) => runtimeRoot.path))) {
-    lines.push(`(allow file-read* (subpath ${sbplString(root)}))`);
+    lines.push(`(allow file-read* ${sbplPathFilters(root)})`);
   }
   for (const root of loweredRootPaths(filesystemLowering, "read")) {
-    lines.push(`(allow file-read* (subpath ${sbplString(root)}))`);
+    lines.push(`(allow file-read* ${sbplPathFilters(root)})`);
   }
   for (const root of loweredRootPaths(filesystemLowering, "write")) {
-    lines.push(`(allow file-read* (subpath ${sbplString(root)}))`);
-    lines.push(`(allow file-write* (subpath ${sbplString(root)}))`);
+    lines.push(`(allow file-read* ${sbplPathFilters(root)})`);
+    lines.push(`(allow file-write* ${sbplPathFilters(root)})`);
   }
   lines.push(
     request.enforcement.network === "deny"
@@ -1044,6 +1044,11 @@ function plannedWindowsAclRoots(
 
 function sbplString(value: string): string {
   return JSON.stringify(value);
+}
+
+function sbplPathFilters(path: string): string {
+  const value = sbplString(path);
+  return `(literal ${value}) (subpath ${value})`;
 }
 
 async function runBackend(request: RunRequest): Promise<RunResponse> {

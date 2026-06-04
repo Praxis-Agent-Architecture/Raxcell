@@ -864,7 +864,7 @@ test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () 
     assert.equal(artifact.arguments[0], "/usr/bin/sandbox-exec");
     assert.match(String(artifact.data.profile), /\(deny default\)/);
     assert.match(String(artifact.data.profile), /\(deny network\*\)/);
-    assert.match(String(artifact.data.profile), /\(allow file-read\* \(subpath "\/usr"\)\)/);
+    assert.match(String(artifact.data.profile), /\(allow file-read\* \(literal "\/usr"\) \(subpath "\/usr"\)\)/);
     assert.deepEqual(artifact.data.readRoots, [workspace]);
     assert.deepEqual(artifact.data.writeRoots, []);
     assert.ok(response.filesystemLowering?.runtimeRoots.some((root) => root.path === "/usr"));
@@ -876,6 +876,56 @@ test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () 
     assert.equal(artifact.warnings[0].code, "NATIVE_BACKEND_HOST_PLATFORM_MISMATCH");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("prepare-run for macos-seatbelt emits literal filters for granted file roots", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-macos-file-grant-workspace-"));
+  const externalRoot = mkdtempSync(join(tmpdir(), "raxcell-macos-file-grant-external-"));
+  const externalFile = join(externalRoot, "helloRax.txt");
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    backendPreference: ["macos-seatbelt"],
+    policyGrants: [
+      {
+        reason: "human-approved-write",
+        path: externalFile,
+        access: ["write"],
+        grantedBy: "praxis-policy",
+      },
+    ],
+    command: {
+      argv: ["/bin/sh", "-lc", `printf hello > ${externalFile}`],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+      network: "deny",
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    const profile = String(response.backendArtifacts[0].data.profile);
+    assert.match(profile, new RegExp(`\\(allow file-read\\* \\(literal ${escapeRegExp(JSON.stringify(externalFile))}\\)`));
+    assert.match(profile, new RegExp(`\\(allow file-write\\* \\(literal ${escapeRegExp(JSON.stringify(externalFile))}\\)`));
+    assert.ok(response.filesystemLowering?.declaredRoots.some((root) => {
+      return root.path === externalFile && root.access === "write" && root.source === "policy-grant";
+    }));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
   }
 });
 
@@ -965,6 +1015,10 @@ function sampleRunRequest(): RunRequest {
       mode: "none",
     },
   };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 test("explain backend response type exposes operation schema", () => {
