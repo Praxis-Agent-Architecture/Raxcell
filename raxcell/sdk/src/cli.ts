@@ -5,6 +5,7 @@ import { dirname, isAbsolute, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellEffects, type ShellEffect } from "./shell-effects.js";
+import { buildPreparedSpawnEnv, type SpawnEnvMode } from "./spawn-env.js";
 import type {
   BackendFamily,
   BackendExplanation,
@@ -34,6 +35,7 @@ type PreparedBackendRun = {
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
+  envMode?: SpawnEnvMode;
   stdin?: string | null;
   outputMode?: "command" | "run-result-json";
 };
@@ -730,6 +732,7 @@ function prepareMacosSeatbelt(request: RunRequest): PreparedBackendRun {
     args,
     cwd: request.command.cwd,
     env: request.command.env,
+    envMode: "clean",
   };
 }
 
@@ -1159,7 +1162,7 @@ function spawnPreparedCommand(
     const child = spawn(prepared.executable!, prepared.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: prepared.cwd,
-      env: prepared.env ? { ...process.env, ...prepared.env } : undefined,
+      env: buildPreparedSpawnEnv(prepared.env, prepared.envMode ?? "inherit"),
     });
     const timeoutMs = getTimeoutMs(request);
     let stdout = "";

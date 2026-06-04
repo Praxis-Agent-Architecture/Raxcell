@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { RaxcellClient } from "./client.js";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
 import { analyzeShellScript } from "./shell-effects.js";
+import { buildPreparedSpawnEnv } from "./spawn-env.js";
 import type {
   ExplainBackendResponse,
   PolicyPack,
@@ -23,6 +24,24 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = resolve(testDir, "../package.json");
 const cliPath = resolve(testDir, "cli.js");
 const hasBwrap = spawnSync("which", ["bwrap"]).status === 0;
+
+test("clean prepared spawn env does not inherit host environment", () => {
+  const hostEnv = {
+    PATH: "/host/bin",
+    RAXCELL_HOST_ONLY: "should-not-leak",
+  };
+  const requestEnv = {
+    PATH: "/request/bin",
+    RAXCELL_ALLOWED: "yes",
+  };
+
+  assert.deepEqual(buildPreparedSpawnEnv(requestEnv, "clean", hostEnv), requestEnv);
+  assert.deepEqual(buildPreparedSpawnEnv(requestEnv, "inherit", hostEnv), {
+    ...hostEnv,
+    ...requestEnv,
+  });
+  assert.equal(buildPreparedSpawnEnv(undefined, "inherit", hostEnv), undefined);
+});
 
 test("runner protocol parser accepts raxcell run result JSON", () => {
   const response: RunResponse = {

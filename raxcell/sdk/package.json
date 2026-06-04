@@ -29,6 +29,8 @@
     "dist/runner-protocol.js",
     "dist/shell-effects.d.ts",
     "dist/shell-effects.js",
+    "dist/spawn-env.d.ts",
+    "dist/spawn-env.js",
     "dist/types.d.ts",
     "dist/types.js",
     "README.md",
