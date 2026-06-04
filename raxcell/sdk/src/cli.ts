@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { analyzeShellEffects, type ShellEffect } from "./shell-effects.js";
 import type {
   BackendFamily,
   BackendLoweringArtifact,
@@ -33,11 +34,6 @@ type AllowedRoot = {
   path: string;
   access: "read" | "write";
   source: "declared" | "policy-grant";
-};
-
-type PathReference = {
-  path: string;
-  access: "read" | "write";
 };
 
 const VERSION = readPackageVersion();
@@ -299,6 +295,25 @@ function prepareLinux(request: RunRequest): PreparedLinuxRun {
     };
   }
 
+  const environmentGap = dynamicPathEnvironmentGap(request);
+  if (environmentGap) {
+    return {
+      response: {
+        kind: "raxcell.prepareRunResult.v1",
+        ok: false,
+        backend,
+        denial: null,
+        policyDecision: null,
+        environmentGap,
+        filesystemLowering,
+        backendArtifacts: [],
+        capabilityReport,
+      },
+      bwrapExecutable,
+      bwrapArgs: [],
+    };
+  }
+
   const pathDecision = argvPathPolicyDecision(request, filesystemLowering.policyGrants);
   if (pathDecision) {
     return {
@@ -546,6 +561,7 @@ function lowerFilesystem(request: RunRequest): FileSystemLoweringReport {
     runtimeRoots: runtimeLoweredRoots(),
     policyGrants,
     warnings: [],
+    effects: analyzeShellEffects(request.command.argv, normalizeAbsolute(request.command.cwd)),
   };
 }
 
@@ -619,17 +635,21 @@ function argvPathPolicyDecision(
   policyGrants: PolicyGrant[],
 ): PolicyDecisionRequired | null {
   const roots = allowedRoots(request, policyGrants);
-  const cwd = normalizeAbsolute(request.command.cwd);
   const requirements = new Map<string, Set<"read" | "write">>();
-  for (const token of request.command.argv.slice(1)) {
-    for (const reference of pathReferencesInToken(token, cwd)) {
-      if (isRuntimePath(reference.path)) {
-        continue;
-      }
-      const existing = requirements.get(reference.path) ?? new Set<"read" | "write">();
-      existing.add(reference.access);
-      requirements.set(reference.path, existing);
+
+  for (const effect of analyzeShellEffects(request.command.argv, normalizeAbsolute(request.command.cwd))) {
+    if (effect.warning === "shell-dynamic-path-unresolved") {
+      continue;
     }
+    const path = effect.path ?? effect.pattern;
+    if (!path || isRuntimePath(path)) {
+      continue;
+    }
+    const accessSet = requirements.get(path) ?? new Set<"read" | "write">();
+    for (const access of accessesForEffect(effect)) {
+      accessSet.add(access);
+    }
+    requirements.set(path, accessSet);
   }
 
   for (const [path, accessSet] of requirements) {
@@ -652,72 +672,28 @@ function argvPathPolicyDecision(
   return null;
 }
 
-function pathReferencesInToken(token: string, cwd: string): PathReference[] {
-  const references = new Map<string, Set<"read" | "write">>();
-  for (const shellToken of shellPathTokens(token)) {
-    const path = normalizeShellPath(shellToken, cwd);
-    if (!path) {
-      continue;
-    }
-    const accessSet = references.get(path) ?? new Set<"read" | "write">();
-    accessSet.add("read");
-    references.set(path, accessSet);
+function dynamicPathEnvironmentGap(request: RunRequest): EnvironmentGap | null {
+  const effect = analyzeShellEffects(
+    request.command.argv,
+    normalizeAbsolute(request.command.cwd),
+  ).find((candidate) => candidate.warning === "shell-dynamic-path-unresolved");
+  if (!effect) {
+    return null;
   }
-
-  for (const shellToken of shellWritePathTokens(token)) {
-    const path = normalizeShellPath(shellToken, cwd);
-    if (!path) {
-      continue;
-    }
-    const accessSet = references.get(path) ?? new Set<"read" | "write">();
-    accessSet.add("write");
-    references.set(path, accessSet);
-  }
-
-  if (token.includes("write_text(")) {
-    for (const [path, accessSet] of references) {
-      accessSet.add("write");
-      references.set(path, accessSet);
-    }
-  }
-
-  const output: PathReference[] = [];
-  for (const [path, accessSet] of references) {
-    for (const access of accessSet) {
-      output.push({ path, access });
-    }
-  }
-  return output;
+  return {
+    reason: "shell-dynamic-path-unresolved",
+    path: effect.rawToken,
+    required: accessListForEffect(effect),
+    publicSafeMessage: "The command contains a dynamic shell path that Raxcell cannot safely normalize.",
+  };
 }
 
-function normalizeShellPath(token: string, cwd: string): string | null {
-  if (isAbsolute(token)) {
-    return normalizeAbsolute(token);
-  }
-  if (token.includes("/")) {
-    return resolve(cwd, token);
-  }
-  return null;
+function accessesForEffect(effect: ShellEffect): Array<"read" | "write"> {
+  return effect.access === "readwrite" ? ["read", "write"] : [effect.access];
 }
 
-function shellWritePathTokens(token: string): string[] {
-  const output: string[] = [];
-  for (const match of token.matchAll(
-    /(?:^|[\s])(?:\d*>>?|\d*<>)\s*(?:"([^"]+)"|'([^']+)'|([^\s"'`<>|;&()]+))/g,
-  )) {
-    const path = match[1] ?? match[2] ?? match[3];
-    if (path) {
-      output.push(path);
-    }
-  }
-  return output;
-}
-
-function shellPathTokens(token: string): string[] {
-  return token
-    .split(/[\s"'`<>|;&()]+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+function accessListForEffect(effect: ShellEffect): string[] {
+  return accessesForEffect(effect);
 }
 
 function allowedRoots(

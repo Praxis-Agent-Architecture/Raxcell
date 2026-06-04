@@ -1,6 +1,6 @@
 {
   "name": "@praxis-ai/raxcell",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": false,
   "description": "TypeScript client for the Raxcell execution enforcement sandbox SDK.",
   "repository": {
@@ -25,6 +25,8 @@
     "dist/client.js",
     "dist/index.d.ts",
     "dist/index.js",
+    "dist/shell-effects.d.ts",
+    "dist/shell-effects.js",
     "dist/types.d.ts",
     "dist/types.js",
     "README.md",

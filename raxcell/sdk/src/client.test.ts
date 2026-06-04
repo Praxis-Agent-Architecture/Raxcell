@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RaxcellClient } from "./client.js";
+import { analyzeShellScript } from "./shell-effects.js";
 import type {
   ExplainBackendResponse,
   PolicyPack,
@@ -20,6 +21,78 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = resolve(testDir, "../package.json");
 const cliPath = resolve(testDir, "cli.js");
 const hasBwrap = spawnSync("which", ["bwrap"]).status === 0;
+
+test("shell effect analyzer classifies common filesystem commands", () => {
+  const cwd = "/workspace";
+  const cases: Array<{ script: string; path: string; access: string }> = [
+    ["cp src /home/proview/a.txt", "/home/proview/a.txt", "write"],
+    ["mv src /home/proview/a.txt", "/home/proview/a.txt", "write"],
+    ["install src /home/proview/a.txt", "/home/proview/a.txt", "write"],
+    ["rsync src /home/proview/dir/", "/home/proview/dir/", "write"],
+    ["touch /home/proview/a.txt", "/home/proview/a.txt", "write"],
+    ["mkdir -p /home/proview/dir", "/home/proview/dir", "write"],
+    ["rm -rf /home/proview/dir", "/home/proview/dir", "write"],
+    ["chmod 600 /home/proview/a.txt", "/home/proview/a.txt", "write"],
+    ["sed -i 's/a/b/' /home/proview/a.txt", "/home/proview/a.txt", "readwrite"],
+    ["perl -pi -e 's/a/b/' /home/proview/a.txt", "/home/proview/a.txt", "readwrite"],
+    ["sed 's/a/b/' /home/proview/a.txt", "/home/proview/a.txt", "read"],
+    ["cat /home/proview/a.txt", "/home/proview/a.txt", "read"],
+    ["grep needle /home/proview/a.txt", "/home/proview/a.txt", "read"],
+    ["cat > /home/proview/a.txt <<EOF", "/home/proview/a.txt", "write"],
+    ["cat /home/proview/a.txt | tee /home/proview/b.txt", "/home/proview/b.txt", "write"],
+  ].map(([script, path, access]) => ({ script, path, access }));
+
+  for (const testCase of cases) {
+    const effects = analyzeShellScript(testCase.script, cwd);
+    assert.ok(
+      effects.some((effect) => effect.path === testCase.path && effect.access === testCase.access),
+      `${testCase.script} should include ${testCase.access} ${testCase.path}; got ${JSON.stringify(effects)}`,
+    );
+  }
+});
+
+test("shell effect analyzer classifies inline Python and Node filesystem calls", () => {
+  const cwd = "/workspace";
+  const cases: Array<{ script: string; access: string }> = [
+    { script: `python -c "open('/home/proview/a.txt','w').write('x')"`, access: "write" },
+    { script: `python -c "open('/home/proview/a.txt','a').write('x')"`, access: "write" },
+    { script: `python -c "open('/home/proview/a.txt','r').read()"`, access: "read" },
+    {
+      script: `python -c "from pathlib import Path; Path('/home/proview/a.txt').write_text('x')"`,
+      access: "write",
+    },
+    {
+      script: `node -e "require('fs').writeFileSync('/home/proview/a.txt','x')"`,
+      access: "write",
+    },
+    {
+      script: `node -e "require('fs').appendFileSync('/home/proview/a.txt','x')"`,
+      access: "write",
+    },
+    {
+      script: `node -e "require('fs').readFileSync('/home/proview/a.txt','utf8')"`,
+      access: "read",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const effects = analyzeShellScript(testCase.script, cwd);
+    assert.ok(
+      effects.some((effect) => effect.path === "/home/proview/a.txt" && effect.access === testCase.access),
+      `${testCase.script} should include ${testCase.access}; got ${JSON.stringify(effects)}`,
+    );
+  }
+});
+
+test("shell effect analyzer preserves quoted paths, globs, pipelines, and dynamic warnings", () => {
+  const effects = analyzeShellScript(
+    `echo x > "/home/proview/a file.txt" && cat /home/proview/*.txt | tee "$HOME/out.txt"`,
+    "/workspace",
+  );
+  assert.ok(effects.some((effect) => effect.path === "/home/proview/a file.txt" && effect.access === "write"));
+  assert.ok(effects.some((effect) => effect.pattern === "/home/proview/*.txt" && effect.warning === "shell-glob-pattern"));
+  assert.ok(effects.some((effect) => effect.rawToken === "$HOME/out.txt" && effect.warning === "shell-dynamic-path-unresolved" && effect.access === "write"));
+});
 
 test("package exposes the raxcell executable", () => {
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
@@ -378,6 +451,159 @@ test("prepare-run rejects external writes with only a read policy grant", () => 
   } finally {
     rmSync(workspace, { recursive: true, force: true });
     rmSync(externalRoot, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test("prepare-run accepts external write after write policy grant", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-write-grant-workspace-"));
+  const externalRoot = mkdtempSync(join(tmpdir(), "raxcell-write-grant-external-"));
+  const externalFile = join(externalRoot, "helloRax.txt");
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexit 0\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    policyGrants: [
+      {
+        reason: "human-approved-write",
+        path: externalFile,
+        access: ["write"],
+        grantedBy: "praxis-policy",
+      },
+    ],
+    command: {
+      argv: ["/bin/sh", "-lc", `printf hello > ${externalFile}`],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, true);
+    assert.equal(response.policyDecision, null);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test("prepare-run accepts external read after read policy grant", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-read-grant-workspace-"));
+  const externalRoot = mkdtempSync(join(tmpdir(), "raxcell-read-grant-external-"));
+  const externalFile = join(externalRoot, "helloRax.txt");
+  writeFileSync(externalFile, "hello");
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexit 0\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    policyGrants: [
+      {
+        reason: "human-approved-read",
+        path: externalFile,
+        access: ["read"],
+        grantedBy: "praxis-policy",
+      },
+    ],
+    command: {
+      argv: ["/bin/sh", "-lc", `cat ${externalFile}`],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, true);
+    assert.equal(response.policyDecision, null);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test("prepare-run reports dynamic shell paths as environment gap", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-dynamic-gap-workspace-"));
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexit 0\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    command: {
+      argv: ["/bin/sh", "-lc", "printf hello > $HOME/helloRax.txt"],
+      cwd: workspace,
+      env: {
+        HOME: "/home/proview",
+      },
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, false);
+    assert.equal(response.policyDecision, null);
+    assert.equal(response.environmentGap?.reason, "shell-dynamic-path-unresolved");
+    assert.deepEqual(response.environmentGap?.required, ["write"]);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
     rmSync(fakeBinDir, { recursive: true, force: true });
   }
 });

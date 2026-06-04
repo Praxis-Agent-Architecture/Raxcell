@@ -4,7 +4,7 @@ Raxcell is an execution-enforcement sandbox SDK for agent runtimes.
 
 This package is the TypeScript client facade. It calls a Raxcell CLI binary through JSON stdin/stdout and exposes typed protocol objects for Praxis or any other agent harness.
 
-Version: `0.1.4`
+Version: `0.1.5`
 
 ## What This Package Is
 
@@ -40,7 +40,7 @@ Praxis Agent / Harness
   -> macOS Seatbelt / Windows native later
 ```
 
-## Current 0.1.4 Runtime Contract
+## Current 0.1.5 Runtime Contract
 
 The package exposes a `raxcell` executable and the client expects a CLI binary path.
 
@@ -272,6 +272,54 @@ const grant: PolicyGrant = {
 
 Then retry `prepareRun()` or call `run()` with the updated request.
 
+## Shell Filesystem Effects
+
+In `0.1.5`, Linux `prepareRun()` analyzes common POSIX shell filesystem effects before lowering to bubblewrap. Raxcell reports facts; Praxis still owns policy, approval, and audit decisions.
+
+Concrete paths outside declared roots return `policyDecision.reason = "path-outside-declared-roots"` with contextual `required` values:
+
+- shell redirection and `tee` outputs: `write`;
+- `cp`, `install`, and `rsync`: source `read`, destination `write`;
+- `mv`: source `readwrite`, destination `write`;
+- `touch`, `mkdir`, `rm`, `chmod`, `chown`: `write`;
+- `sed -i` and `perl -pi`: `readwrite`;
+- `cat`, `grep`, and non-in-place `sed`: `read`;
+- Python `open(..., "w" | "a")`, `Path(...).write_text(...)`: `write`;
+- Node `fs.writeFileSync(...)` and `fs.appendFileSync(...)`: `write`;
+- Python/Node read calls: `read`.
+
+Dynamic paths fail closed as environment facts, not policy grants:
+
+```json
+{
+  "ok": false,
+  "policyDecision": null,
+  "environmentGap": {
+    "reason": "shell-dynamic-path-unresolved",
+    "path": "$HOME/a.txt",
+    "required": ["write"],
+    "publicSafeMessage": "The command contains a dynamic shell path that Raxcell cannot safely normalize."
+  }
+}
+```
+
+Raxcell does not expand `$HOME`, `${TARGET}`, `~`, backticks, or command substitutions from `process.env` or `request.command.env`. Praxis can surface this gap, ask the user, rewrite the command into concrete paths, or deny.
+
+`filesystemLowering.effects` contains structured analyzer facts for UI/audit display:
+
+```ts
+type Effect = {
+  path?: string;
+  pattern?: string;
+  rawToken: string;
+  access: "read" | "write" | "readwrite";
+  command: string;
+  reason: string;
+  confidence: "high" | "medium" | "low";
+  warning?: string;
+};
+```
+
 ## What To Audit In Praxis
 
 Persist these fields for every command:
@@ -298,7 +346,7 @@ console.log(bwrap?.arguments);
 
 ## Linux Status
 
-Linux is usable in `0.1.4`:
+Linux is usable in `0.1.5`:
 
 - `probe` detects `linux-bubblewrap`;
 - `prepareRun` returns filesystem lowering and bubblewrap argv;
@@ -307,7 +355,8 @@ Linux is usable in `0.1.4`:
 - cwd outside declared roots returns `POLICY_DECISION_REQUIRED`;
 - explicit `policyGrants` can authorize cwd;
 - network deny uses bubblewrap network unshare;
-- timeout is enforced by Raxcell process management.
+- timeout is enforced by Raxcell process management;
+- common shell/Python/Node filesystem effects are reported during `prepareRun`.
 
 ## WSL Status
 
@@ -321,7 +370,7 @@ The protocol already exposes backend families:
 - `windows-elevated`
 - `windows-unelevated`
 
-Raxcell keeps macOS Seatbelt and Windows native runners out of the `0.1.4` npm CLI. They remain future backend work.
+Raxcell keeps macOS Seatbelt and Windows native runners out of the `0.1.5` npm CLI. They remain future backend work.
 
 On unsupported hosts, those backends fail closed.
 
@@ -330,7 +379,7 @@ On unsupported hosts, those backends fail closed.
 After building the tarball:
 
 ```bash
-pnpm add /path/to/praxis-ai-raxcell-0.1.4.tgz
+pnpm add /path/to/praxis-ai-raxcell-0.1.5.tgz
 ```
 
 Then import:
@@ -345,7 +394,7 @@ import {
 
 ## Version Notes
 
-`0.1.4` is a Linux-first integration package. The API is intentionally small:
+`0.1.5` is a Linux-first integration package. The API is intentionally small:
 
 - `probe`
 - `explainBackend`

@@ -1,4 +1,5 @@
 export { RaxcellClient } from "./client.js";
+export { analyzeShellEffects, analyzeShellScript } from "./shell-effects.js";
 export type {
   BackendFamily,
   BackendExplanation,
@@ -16,3 +17,4 @@ export type {
   RunRequest,
   RunResponse,
 } from "./types.js";
+export type { ShellEffect, ShellEffectAccess } from "./shell-effects.js";

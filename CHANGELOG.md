@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5
+
+- Added a structured Linux shell filesystem effect analyzer for common shell, Python, and Node read/write patterns.
+- Reported concrete external path requirements as `policyDecision.reason = "path-outside-declared-roots"` with contextual `required` values.
+- Reported dynamic shell paths such as `$HOME/a.txt`, `${TARGET}/x`, `~/x`, and command-substitution paths as `environmentGap.reason = "shell-dynamic-path-unresolved"`.
+- Added analyzer effects to `filesystemLowering.effects` for Praxis audit/TUI display without making Raxcell a policy engine.
+- Exported `analyzeShellEffects` and `analyzeShellScript` from the TypeScript SDK.
+
 ## 0.1.4
 
 - Classified shell redirection and Python `write_text(...)` absolute path references as write requirements during `prepare-run`.

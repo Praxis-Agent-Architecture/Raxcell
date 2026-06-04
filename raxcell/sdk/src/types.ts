@@ -118,6 +118,16 @@ export type FileSystemLoweringReport = {
   runtimeRoots: LoweredRoot[];
   policyGrants: PolicyGrant[];
   warnings: PolicyResolutionWarning[];
+  effects?: Array<{
+    path?: string;
+    pattern?: string;
+    rawToken: string;
+    access: "read" | "write" | "readwrite";
+    command: string;
+    reason: string;
+    confidence: "high" | "medium" | "low";
+    warning?: string;
+  }>;
 };
 
 export type BackendLoweringArtifact = {

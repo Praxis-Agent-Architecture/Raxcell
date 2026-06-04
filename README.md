@@ -62,16 +62,16 @@ Upper runtimes own:
 The TypeScript facade package is:
 
 ```text
-@praxis-ai/raxcell@0.1.4
+@praxis-ai/raxcell@0.1.5
 ```
 
 Install from npm:
 
 ```bash
-pnpm add @praxis-ai/raxcell@0.1.4
+pnpm add @praxis-ai/raxcell@0.1.5
 ```
 
-`@praxis-ai/raxcell@0.1.4` exposes a `raxcell` bin. Praxis can either resolve it from `PATH` after package installation, or pass an explicit development build path such as `raxcell/sdk/dist/cli.js`.
+`@praxis-ai/raxcell@0.1.5` exposes a `raxcell` bin. Praxis can either resolve it from `PATH` after package installation, or pass an explicit development build path such as `raxcell/sdk/dist/cli.js`.
 
 ```ts
 import { RaxcellClient, type RunRequest } from "@praxis-ai/raxcell";
@@ -154,6 +154,7 @@ Executes the command through the selected backend.
 - `raxcell/sdk/src/types.ts`: JSON protocol types.
 - `raxcell/sdk/src/client.ts`: TypeScript client that spawns the CLI.
 - `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI and Linux bubblewrap runner.
+- `raxcell/sdk/src/shell-effects.ts`: Linux shell filesystem effect analyzer.
 - `specs/raxcell`: extraction plans and integration docs.
 
 ## Verification
