@@ -392,6 +392,8 @@ Native planned artifact formats:
   - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
   - `data.runtimeRoots`: backend-runtime read roots added so Seatbelt can execute system tools and libraries; these are not upper-runtime policy grants.
   - `data.networkDenied`: backend network intent.
+  - `data.timeoutMs`: parent-enforced timeout for the spawned `sandbox-exec` process.
+  - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
 - `windows-native-token-acl-plan`
   - `data.runnerProtocol`: `raxcell.windowsRunner.run.v1`.
   - `data.runner`: resolved runner path, when available.
