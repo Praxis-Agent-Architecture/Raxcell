@@ -976,6 +976,7 @@ function plannedWindowsNativeArtifact(
       selectedOn: process.platform,
       runner: windowsNativeRunnerPath(),
       runnerProtocol: "raxcell.windowsRunner.run.v1",
+      normalizedCwd: normalizeAbsoluteForBackend(request.command.cwd, backend),
       commandEnvMode: "clean",
       commandEnv: buildSandboxCommandEnv(request.command.env),
       tokenMode: aclRoots.some((root) => root.access === "write")
@@ -1026,6 +1027,7 @@ function windowsRunnerRequest(
       ...request.command,
       env: buildSandboxCommandEnv(request.command.env),
     },
+    normalizedCwd: normalizeAbsoluteForBackend(request.command.cwd, backend),
     commandEnvMode: "clean",
     enforcement: request.enforcement,
     action: request.action,

@@ -393,6 +393,7 @@ Native planned artifact formats:
 - `windows-native-token-acl-plan`
   - `data.runnerProtocol`: `raxcell.windowsRunner.run.v1`.
   - `data.runner`: resolved runner path, when available.
+  - `data.normalizedCwd`: command cwd normalized with Windows path semantics when the request uses Windows-like paths.
   - `data.commandEnvMode`: `clean`.
   - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
   - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
@@ -409,6 +410,7 @@ The npm package exports this stdin shape as `WindowsRunnerRunRequest`; runner im
   "kind": "raxcell.windowsRunner.run.v1",
   "backend": "windows-native",
   "command": {},
+  "normalizedCwd": "C:\\workspace",
   "commandEnvMode": "clean",
   "enforcement": {},
   "filesystemLowering": {},

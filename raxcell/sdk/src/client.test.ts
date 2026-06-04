@@ -1000,6 +1000,7 @@ test("prepare-run for windows-native preserves Windows path facts on non-Windows
       source: "declared",
     },
   ]);
+  assert.equal(artifact.data.normalizedCwd, "C:\\workspace");
   assert.ok(response.filesystemLowering?.effects?.some((effect) => {
     return effect.path === "C:\\workspace\\input.txt" && effect.access === "read";
   }));
@@ -1326,6 +1327,7 @@ test("windows runner request type exposes native runner protocol surface", () =>
       },
       stdin: null,
     },
+    normalizedCwd: "C:\\workspace",
     commandEnvMode: "clean",
     enforcement: {
       profile: "workspace-write",

@@ -175,6 +175,7 @@ export type WindowsRunnerRunRequest = {
   command: RunRequest["command"] & {
     env: Record<string, string>;
   };
+  normalizedCwd: string;
   commandEnvMode: "clean";
   enforcement: EnforcementSpec;
   action: RunRequest["action"];
