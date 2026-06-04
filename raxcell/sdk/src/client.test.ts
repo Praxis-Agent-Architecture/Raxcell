@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { RaxcellClient } from "./client.js";
 import type {
   ExplainBackendResponse,
   PolicyPack,
@@ -9,6 +15,119 @@ import type {
   RunRequest,
   RunResponse,
 } from "./types.js";
+
+const testDir = dirname(fileURLToPath(import.meta.url));
+const packageJsonPath = resolve(testDir, "../package.json");
+const cliPath = resolve(testDir, "cli.js");
+
+test("package exposes the raxcell executable", () => {
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+    bin?: Record<string, string>;
+  };
+  assert.deepEqual(packageJson.bin, {
+    raxcell: "./dist/cli.js",
+  });
+});
+
+test("cli exposes package version", () => {
+  const result = spawnSync(cliPath, ["--version"], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+$/);
+});
+
+test("client dispatches prepare-run and run through stdin JSON", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "raxcell-client-"));
+  const fakeCli = join(tempDir, "fake-raxcell.js");
+  writeFileSync(
+    fakeCli,
+    `#!/usr/bin/env node
+const chunks = [];
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => chunks.push(chunk));
+process.stdin.on("end", () => {
+  const input = JSON.parse(chunks.join(""));
+  const command = process.argv[2];
+  if (process.argv.includes("--stdin")) {
+    console.error("--stdin should not be passed");
+    process.exit(9);
+  }
+  if (command === "prepare-run") {
+    console.log(JSON.stringify({
+      kind: "raxcell.prepareRunResult.v1",
+      ok: input.kind === "raxcell.run.v1",
+      backend: "linux-bubblewrap",
+      denial: null,
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering: null,
+      backendArtifacts: [],
+      capabilityReport: null
+    }));
+    return;
+  }
+  if (command === "run") {
+    console.log(JSON.stringify({
+      kind: "raxcell.runResult.v1",
+      ok: true,
+      backend: "linux-bubblewrap",
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+      timedOut: false,
+      denial: null,
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering: null,
+      fallback: null,
+      capabilityReport: null
+    }));
+    return;
+  }
+  console.error("unexpected command " + command);
+  process.exit(8);
+});
+`,
+  );
+  chmodSync(fakeCli, 0o755);
+
+  try {
+    const client = new RaxcellClient({ binaryPath: fakeCli });
+    const request = sampleRunRequest();
+    const prepared = await client.prepareRun(request);
+    const result = await client.run(request);
+    assert.equal(prepared.kind, "raxcell.prepareRunResult.v1");
+    assert.equal(result.stdout, "ok");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("client rejects responses with the wrong protocol kind", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "raxcell-client-"));
+  const fakeCli = join(tempDir, "fake-raxcell.js");
+  writeFileSync(
+    fakeCli,
+    `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({ kind: "wrong.kind" }));
+});
+`,
+  );
+  chmodSync(fakeCli, 0o755);
+
+  try {
+    const client = new RaxcellClient({ binaryPath: fakeCli });
+    await assert.rejects(
+      () => client.prepareRun(sampleRunRequest()),
+      /Unexpected raxcell response kind/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 test("probe request type accepts all first-class backend families", () => {
   const request: ProbeRequest = {
@@ -23,6 +142,43 @@ test("probe request type accepts all first-class backend families", () => {
   };
   assert.equal(request.backendPreference?.length, 4);
 });
+
+function sampleRunRequest(): RunRequest {
+  return {
+    kind: "raxcell.run.v1",
+    backendPreference: ["linux-bubblewrap"],
+    policyGrants: [],
+    action: {
+      actionId: "act-1",
+      ownerRuntime: "example",
+      intentLabel: "opaque",
+      metadata: {},
+    },
+    command: {
+      argv: ["/usr/bin/printf", "hello"],
+      cwd: ".",
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      profile: "workspace-write-no-network",
+      filesystem: {
+        read: ["/tmp"],
+        write: ["/tmp"],
+      },
+      network: "deny",
+      process: {
+        spawn: true,
+      },
+      resources: {
+        timeoutMs: 1000,
+      },
+    },
+    fallback: {
+      mode: "none",
+    },
+  };
+}
 
 test("explain backend response type exposes operation schema", () => {
   const response: ExplainBackendResponse = {

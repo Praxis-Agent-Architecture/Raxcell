@@ -4,7 +4,7 @@ Raxcell is an execution-enforcement sandbox SDK for agent runtimes.
 
 This package is the TypeScript client facade. It calls a Raxcell CLI binary through JSON stdin/stdout and exposes typed protocol objects for Praxis or any other agent harness.
 
-Version: `0.1.0`
+Version: `0.1.1`
 
 ## What This Package Is
 
@@ -40,19 +40,25 @@ Praxis Agent / Harness
   -> macOS Seatbelt / Windows native later
 ```
 
-## Current 0.1.0 Runtime Contract
+## Current 0.1.1 Runtime Contract
 
-The package expects a Raxcell CLI binary path.
+The package exposes a `raxcell` executable and the client expects a CLI binary path.
 
 ```ts
 import { RaxcellClient } from "@praxis-ai/raxcell";
 
 const raxcell = new RaxcellClient({
-  binaryPath: "/absolute/path/to/raxcell",
+  binaryPath: process.env.RAXCELL_BIN ?? "raxcell",
 });
 ```
 
-The current tarball ships the TypeScript client and protocol types. It does not yet bundle platform-specific native binaries. Praxis should pass the CLI path explicitly.
+For development against this repository, Praxis can point directly at the build artifact:
+
+```bash
+RAXCELL_BIN=/home/proview/Desktop/Praxis_series/development/Raxcell/raxcell/sdk/dist/cli.js
+```
+
+The current package ships a TypeScript/Node CLI with a Linux bubblewrap runner. It does not yet ship macOS or Windows native runners.
 
 ## Core Methods
 
@@ -292,7 +298,7 @@ console.log(bwrap?.arguments);
 
 ## Linux Status
 
-Linux is usable in `0.1.0`:
+Linux is usable in `0.1.1`:
 
 - `probe` detects `linux-bubblewrap`;
 - `prepareRun` returns filesystem lowering and bubblewrap argv;
@@ -315,7 +321,7 @@ The protocol already exposes backend families:
 - `windows-elevated`
 - `windows-unelevated`
 
-Raxcell has internal native lowering models for macOS Seatbelt and Windows token/ACL/WFP planning, but `0.1.0` does not bundle or enable native platform runners yet.
+Raxcell keeps macOS Seatbelt and Windows native runners out of the `0.1.1` npm CLI. They remain future backend work.
 
 On unsupported hosts, those backends fail closed.
 
@@ -324,7 +330,7 @@ On unsupported hosts, those backends fail closed.
 After building the tarball:
 
 ```bash
-pnpm add /path/to/praxis-ai-raxcell-0.1.0.tgz
+pnpm add /path/to/praxis-ai-raxcell-0.1.1.tgz
 ```
 
 Then import:
@@ -339,7 +345,7 @@ import {
 
 ## Version Notes
 
-`0.1.0` is a Linux-first integration package. The API is intentionally small:
+`0.1.1` is a Linux-first integration package. The API is intentionally small:
 
 - `probe`
 - `explainBackend`

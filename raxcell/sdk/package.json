@@ -1,6 +1,6 @@
 {
   "name": "@praxis-ai/raxcell",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "TypeScript client for the Raxcell execution enforcement sandbox SDK.",
   "repository": {
@@ -15,7 +15,12 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "raxcell": "./dist/cli.js"
+  },
   "files": [
+    "dist/cli.d.ts",
+    "dist/cli.js",
     "dist/client.d.ts",
     "dist/client.js",
     "dist/index.d.ts",
@@ -26,7 +31,7 @@
     "package.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "test": "node --test dist/client.test.js"
   },
   "devDependencies": {

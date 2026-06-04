@@ -30,14 +30,8 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: pnpm
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Test Rust workspace
-        run: cargo test --manifest-path raxcell/Cargo.toml
 
       - name: Build TypeScript SDK
         run: pnpm build:sdk

@@ -5,6 +5,7 @@ export type {
   ExplainBackendRequest,
   ExplainBackendResponse,
   BackendLoweringArtifact,
+  EnvironmentGap,
   FileSystemLoweringReport,
   OperationSchema,
   PrepareRunResponse,

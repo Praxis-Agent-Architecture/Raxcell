@@ -1,6 +1,7 @@
 export type BackendFamily =
   | "linux-bubblewrap"
   | "macos-seatbelt"
+  | "windows-native"
   | "windows-elevated"
   | "windows-unelevated"
   | "host-observed"
@@ -87,6 +88,13 @@ export type PolicyDecisionRequired = {
   publicSafeMessage: string;
 };
 
+export type EnvironmentGap = {
+  reason: string;
+  path?: string | null;
+  required?: string[];
+  publicSafeMessage: string;
+};
+
 export type LoweredRootAccess =
   | "read"
   | "write"
@@ -154,6 +162,7 @@ export type RunResponse = {
     publicSafe: boolean;
   } | null;
   policyDecision?: PolicyDecisionRequired | null;
+  environmentGap?: EnvironmentGap | null;
   filesystemLowering?: FileSystemLoweringReport | null;
   fallback: unknown | null;
   capabilityReport: ProbeResponse | null;
@@ -169,6 +178,7 @@ export type PrepareRunResponse = {
     publicSafe: boolean;
   } | null;
   policyDecision?: PolicyDecisionRequired | null;
+  environmentGap?: EnvironmentGap | null;
   filesystemLowering?: FileSystemLoweringReport | null;
   backendArtifacts: BackendLoweringArtifact[];
   capabilityReport: ProbeResponse | null;

@@ -23,48 +23,61 @@ export class RaxcellClient {
   }
 
   async probe(request: ProbeRequest): Promise<ProbeResponse> {
-    const output = await runJson(this.binaryPath, ["probe", "--stdin"], request);
-    return JSON.parse(output) as ProbeResponse;
+    return runJson(
+      this.binaryPath,
+      ["probe"],
+      request,
+      "raxcell.probeResult.v1",
+    );
   }
 
   async explainBackend(
     request: ExplainBackendRequest,
   ): Promise<ExplainBackendResponse> {
-    const output = await runJson(
+    return runJson(
       this.binaryPath,
-      ["explain-backend", "--stdin"],
+      ["explain-backend"],
       request,
+      "raxcell.explainBackendResult.v1",
     );
-    return JSON.parse(output) as ExplainBackendResponse;
   }
 
   async resolveProfile(
     request: ResolveProfileRequest,
   ): Promise<ResolvedProfileResponse> {
-    const output = await runJson(
+    return runJson(
       this.binaryPath,
-      ["resolve-profile", "--stdin"],
+      ["resolve-profile"],
       request,
+      "raxcell.resolvedProfile.v1",
     );
-    return JSON.parse(output) as ResolvedProfileResponse;
   }
 
   async run(request: RunRequest): Promise<RunResponse> {
-    const output = await runJson(this.binaryPath, ["run", "--stdin"], request);
-    return JSON.parse(output) as RunResponse;
+    return runJson(
+      this.binaryPath,
+      ["run"],
+      request,
+      "raxcell.runResult.v1",
+    );
   }
 
   async prepareRun(request: RunRequest): Promise<PrepareRunResponse> {
-    const output = await runJson(
+    return runJson(
       this.binaryPath,
-      ["prepare-run", "--stdin"],
+      ["prepare-run"],
       request,
+      "raxcell.prepareRunResult.v1",
     );
-    return JSON.parse(output) as PrepareRunResponse;
   }
 }
 
-function runJson(binaryPath: string, args: string[], input: unknown): Promise<string> {
+function runJson<T extends { kind: string }>(
+  binaryPath: string,
+  args: string[],
+  input: unknown,
+  expectedKind: T["kind"],
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const child = spawn(binaryPath, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -80,7 +93,20 @@ function runJson(binaryPath: string, args: string[], input: unknown): Promise<st
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) {
-        resolve(stdout.trim());
+        try {
+          const response = JSON.parse(stdout.trim()) as T;
+          if (response.kind !== expectedKind) {
+            reject(
+              new Error(
+                `Unexpected raxcell response kind: ${response.kind}; expected ${expectedKind}`,
+              ),
+            );
+            return;
+          }
+          resolve(response);
+        } catch (error) {
+          reject(error);
+        }
       } else {
         reject(new Error(stderr.trim() || `raxcell exited with code ${code}`));
       }

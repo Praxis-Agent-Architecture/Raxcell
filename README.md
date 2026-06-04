@@ -8,7 +8,7 @@ Raxcell is not Praxis-specific. Praxis is the first target runtime, but the cont
 
 ## Status
 
-Current version: `0.1.0`
+Current version: `0.1.1`
 
 Linux is usable today:
 
@@ -22,7 +22,7 @@ Linux is usable today:
 - `prepareRun` returns `filesystemLowering` and backend-specific `backendArtifacts`.
 - Linux `backendArtifacts` include the complete bubblewrap argv.
 
-macOS and Windows are protocol-visible but not enabled as executable runners in `0.1.0`:
+macOS and Windows are protocol-visible but not enabled as executable runners in `0.1.1`:
 
 - `macos-seatbelt` has an internal Seatbelt lowering artifact model.
 - `windows-elevated` and `windows-unelevated` have internal token/ACL/WFP lowering artifact models.
@@ -35,8 +35,8 @@ From an agent runtime's perspective:
 ```text
 Agent / Harness
   -> Runtime policy middleware
-  -> Raxcell TypeScript client or JSON-RPC worker
-  -> Raxcell core
+  -> Raxcell TypeScript client
+  -> raxcell CLI JSON stdin/stdout protocol
   -> linux-bubblewrap / future macOS Seatbelt / future Windows native
 ```
 
@@ -62,22 +62,22 @@ Upper runtimes own:
 The TypeScript facade package is:
 
 ```text
-@praxis-ai/raxcell@0.1.0
+@praxis-ai/raxcell@0.1.1
 ```
 
-Install from a local tarball:
+Install from npm:
 
 ```bash
-pnpm add /path/to/praxis-ai-raxcell-0.1.0.tgz
+pnpm add @praxis-ai/raxcell@0.1.1
 ```
 
-Use it with a Raxcell CLI binary path:
+`@praxis-ai/raxcell@0.1.1` exposes a `raxcell` bin. Praxis can either resolve it from `PATH` after package installation, or pass an explicit development build path such as `raxcell/sdk/dist/cli.js`.
 
 ```ts
 import { RaxcellClient, type RunRequest } from "@praxis-ai/raxcell";
 
 const raxcell = new RaxcellClient({
-  binaryPath: "/absolute/path/to/raxcell",
+  binaryPath: process.env.RAXCELL_BIN ?? "raxcell",
 });
 
 const request: RunRequest = {
@@ -151,36 +151,28 @@ Executes the command through the selected backend.
 
 ## Repository Layout
 
-- `raxcell/crates/protocol`: JSON protocol types.
-- `raxcell/crates/core`: backend dispatch, policy resolution, prepare/run logic.
-- `raxcell/crates/cli`: CLI and stdio JSON-RPC worker.
-- `raxcell/sdk`: TypeScript client package.
-- `raxcell/fixtures`: JSON smoke fixtures.
+- `raxcell/sdk/src/types.ts`: JSON protocol types.
+- `raxcell/sdk/src/client.ts`: TypeScript client that spawns the CLI.
+- `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI and Linux bubblewrap runner.
 - `specs/raxcell`: extraction plans and integration docs.
 
 ## Verification
 
-Run the Rust tests:
-
-```bash
-cargo test --manifest-path raxcell/Cargo.toml
-```
-
 Run the TypeScript SDK checks:
 
 ```bash
-pnpm install
-pnpm build:sdk
-pnpm test:sdk
+pnpm --dir raxcell/sdk install --frozen-lockfile
+pnpm --dir raxcell/sdk build
+pnpm --dir raxcell/sdk test
 ```
 
 Run Linux smoke commands:
 
 ```bash
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- probe --stdin < raxcell/fixtures/probe.auto.json
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- prepare-run --stdin < raxcell/fixtures/prepare-run.linux-bubblewrap.json
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- run --stdin < raxcell/fixtures/run.linux-bubblewrap.json
-cargo run --manifest-path raxcell/Cargo.toml -p raxcell-cli -- explain-backend --stdin < raxcell/fixtures/explain-backend.linux-bubblewrap.json
+raxcell/sdk/dist/cli.js --version
+raxcell/sdk/dist/cli.js probe
+printf '%s' "$RUN_REQUEST_JSON" | raxcell/sdk/dist/cli.js prepare-run
+printf '%s' "$RUN_REQUEST_JSON" | raxcell/sdk/dist/cli.js run
 ```
 
 ## Publishing
@@ -199,10 +191,10 @@ Configure the repository secret:
 NPM_TOKEN
 ```
 
-The workflow runs Rust tests, TypeScript build, TypeScript tests, and then:
+The workflow runs TypeScript build, TypeScript tests, and then:
 
 ```bash
-pnpm --dir raxcell/sdk publish --access public --no-git-checks --provenance
+npm publish --access public --provenance
 ```
 
 ## License
