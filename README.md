@@ -50,21 +50,29 @@ The SDK ships smoke scripts that macOS and Windows reviewers can run without Pra
 - `prepare-run` for dynamic shell paths;
 - `run` with a concrete write grant when the backend is ready.
 
-From a local checkout:
+Fast path from a fresh machine:
 
 ```bash
-cd raxcell/sdk
-pnpm install --frozen-lockfile
-pnpm build
+git clone --branch dev/raxcell --depth 1 https://github.com/Praxis-Agent-Architecture/Raxcell.git
+cd Raxcell
+bash scripts/native-smoke-macos.sh
+```
+
+Windows PowerShell:
+
+```powershell
+git clone --branch dev/raxcell --depth 1 https://github.com/Praxis-Agent-Architecture/Raxcell.git
+cd Raxcell
+powershell -ExecutionPolicy Bypass -File scripts\native-smoke-windows.ps1
+```
+
+If the repo is already cloned:
+
+```bash
 pnpm smoke:macos
 ```
 
-On Windows PowerShell:
-
 ```powershell
-cd raxcell\sdk
-pnpm install --frozen-lockfile
-pnpm build
 pnpm smoke:windows
 ```
 
