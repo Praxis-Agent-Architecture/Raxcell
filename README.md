@@ -37,6 +37,52 @@ Native planned artifacts are backend-specific:
 - `macos-seatbelt-sbpl-profile`: planned `/usr/bin/sandbox-exec` invocation, generated SBPL profile text, clean command env, read/write roots, backend runtime read roots, network deny state, and analyzer effects.
 - `windows-native-token-acl-plan`: planned runner protocol, clean command env, token mode, ACL roots, network block state, process/resource limits, and analyzer effects.
 
+## Native Backend Smoke Scripts
+
+The SDK ships smoke scripts that macOS and Windows reviewers can run without Praxis. They exercise the same CLI protocol Praxis uses:
+
+- `raxcell --version`;
+- `probe`;
+- `explain-backend`;
+- `prepare-run` for workspace writes;
+- `prepare-run` for external writes without grants;
+- `prepare-run` for external writes with read-only grants;
+- `prepare-run` for dynamic shell paths;
+- `run` with a concrete write grant when the backend is ready.
+
+From a local checkout:
+
+```bash
+cd raxcell/sdk
+pnpm install --frozen-lockfile
+pnpm build
+pnpm smoke:macos
+```
+
+On Windows PowerShell:
+
+```powershell
+cd raxcell\sdk
+pnpm install --frozen-lockfile
+pnpm build
+pnpm smoke:windows
+```
+
+Both scripts print a single JSON object with `kind = "raxcell.nativeSmokeResult.v1"`. `ok: true` means every probe/prepare/run expectation passed for that host. If the backend is not attachable on that machine, the script still verifies fail-closed facts and marks the actual run step as skipped.
+
+For installed package or custom binary tests, point the script at the binary:
+
+```bash
+RAXCELL_BIN=/absolute/path/to/raxcell pnpm smoke:macos
+```
+
+```powershell
+$env:RAXCELL_BIN = "C:\absolute\path\to\raxcell.cmd"
+pnpm smoke:windows
+```
+
+Windows execution additionally needs a native runner through `RAXCELL_WINDOWS_RUNNER` or `raxcell-windows-runner` on `PATH`; without it, Raxcell reports `environmentGap.reason = "native-backend-runner-unattached"`.
+
 ## Boundary
 
 Raxcell is an execution provider, not a policy engine.

@@ -35,12 +35,16 @@
     "dist/spawn-env.js",
     "dist/types.d.ts",
     "dist/types.js",
+    "scripts/smoke-macos-seatbelt.mjs",
+    "scripts/smoke-windows-native.mjs",
     "README.md",
     "package.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
-    "test": "node --test dist/client.test.js"
+    "test": "node --test dist/client.test.js",
+    "smoke:macos": "node scripts/smoke-macos-seatbelt.mjs",
+    "smoke:windows": "node scripts/smoke-windows-native.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

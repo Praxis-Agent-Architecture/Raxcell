@@ -37,7 +37,7 @@ Praxis Agent / Harness
   -> @praxis-ai/raxcell client
   -> Raxcell CLI / worker
   -> linux-bubblewrap now
-  -> macOS Seatbelt / Windows native later
+  -> macOS Seatbelt / Windows native runner
 ```
 
 ## Current 0.1.5 Runtime Contract
@@ -380,6 +380,58 @@ The protocol already exposes backend families:
 Raxcell can execute `macos-seatbelt` on macOS hosts when `/usr/bin/sandbox-exec` is available. Windows native execution requires a runner binary that enforces restricted token, ACL roots, Job Object limits, and network controls.
 
 When selected through `backendPreference`, Windows backends return native capability facts and planned lowering artifacts. They fail closed with `environmentGap.reason = "host-platform-mismatch"` on non-Windows hosts, or `environmentGap.reason = "native-backend-runner-unattached"` on Windows hosts without a runner. They do not ask for approval, grant policy, or fall back to host execution.
+
+## Native Backend Smoke Scripts
+
+This package includes reviewer smoke scripts for native backend validation outside Praxis:
+
+- `pnpm smoke:macos` runs `scripts/smoke-macos-seatbelt.mjs`;
+- `pnpm smoke:windows` runs `scripts/smoke-windows-native.mjs`.
+
+They exercise the same JSON stdin/stdout CLI contract as `RaxcellClient`: `--version`, `probe`, `explain-backend`, `prepare-run`, and `run` when the backend is ready.
+
+macOS:
+
+```bash
+cd raxcell/sdk
+pnpm install --frozen-lockfile
+pnpm build
+pnpm smoke:macos
+```
+
+Windows PowerShell:
+
+```powershell
+cd raxcell\sdk
+pnpm install --frozen-lockfile
+pnpm build
+pnpm smoke:windows
+```
+
+To test an installed binary or a custom build, set `RAXCELL_BIN`:
+
+```bash
+RAXCELL_BIN=/absolute/path/to/raxcell pnpm smoke:macos
+```
+
+```powershell
+$env:RAXCELL_BIN = "C:\absolute\path\to\raxcell.cmd"
+pnpm smoke:windows
+```
+
+Each script prints one JSON response:
+
+```json
+{
+  "kind": "raxcell.nativeSmokeResult.v1",
+  "backend": "macos-seatbelt",
+  "ok": true,
+  "ready": true,
+  "results": []
+}
+```
+
+`ok: true` means every expected fact matched. If the selected backend is not available on that host, the script still verifies fail-closed `environmentGap` behavior and skips the real `run` smoke. Windows native execution additionally requires `RAXCELL_WINDOWS_RUNNER` or `raxcell-windows-runner` on `PATH`; otherwise the expected fail-closed reason is `native-backend-runner-unattached`.
 
 Native planned artifact formats:
 

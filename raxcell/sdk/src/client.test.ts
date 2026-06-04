@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -287,6 +287,40 @@ test("package exposes the raxcell executable", () => {
   assert.deepEqual(packageJson.bin, {
     raxcell: "./dist/cli.js",
   });
+});
+
+test("package exposes colleague smoke scripts for native backends", () => {
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+    scripts?: Record<string, string>;
+  };
+  assert.equal(packageJson.scripts?.["smoke:macos"], "node scripts/smoke-macos-seatbelt.mjs");
+  assert.equal(packageJson.scripts?.["smoke:windows"], "node scripts/smoke-windows-native.mjs");
+  assert.equal(existsSync(resolve(testDir, "../scripts/smoke-macos-seatbelt.mjs")), true);
+  assert.equal(existsSync(resolve(testDir, "../scripts/smoke-windows-native.mjs")), true);
+});
+
+test("colleague smoke scripts emit protocol JSON summaries on this host", () => {
+  for (const scriptName of ["smoke-macos-seatbelt.mjs", "smoke-windows-native.mjs"]) {
+    const scriptPath = resolve(testDir, "../scripts", scriptName);
+    const result = spawnSync(process.execPath, [scriptPath], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RAXCELL_BIN: cliPath,
+      },
+    });
+
+    assert.equal(result.status, 0, `${scriptName}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    const response = JSON.parse(result.stdout) as {
+      kind: string;
+      ok: boolean;
+      results: Array<{ name: string; ok: boolean }>;
+    };
+    assert.equal(response.kind, "raxcell.nativeSmokeResult.v1");
+    assert.equal(response.ok, true);
+    assert.ok(response.results.length >= 5);
+    assert.deepEqual(response.results.filter((entry) => !entry.ok), []);
+  }
 });
 
 test("cli exposes package version", () => {
