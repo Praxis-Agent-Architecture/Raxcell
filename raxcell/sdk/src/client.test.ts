@@ -7,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RaxcellClient } from "./client.js";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
-import { analyzeShellScript } from "./shell-effects.js";
+import { analyzeShellEffects, analyzeShellScript } from "./shell-effects.js";
 import { DEFAULT_COMMAND_PATH, buildPreparedSpawnEnv } from "./spawn-env.js";
 import type {
   ExplainBackendResponse,
@@ -224,6 +224,37 @@ test("shell effect analyzer preserves quoted paths, globs, pipelines, and dynami
   assert.ok(effects.some((effect) => effect.path === "/home/proview/a file.txt" && effect.access === "write"));
   assert.ok(effects.some((effect) => effect.pattern === "/home/proview/*.txt" && effect.warning === "shell-glob-pattern"));
   assert.ok(effects.some((effect) => effect.rawToken === "$HOME/out.txt" && effect.warning === "shell-dynamic-path-unresolved" && effect.access === "write"));
+});
+
+test("shell effect analyzer classifies Windows cmd filesystem effects", () => {
+  const effects = analyzeShellScript(
+    `echo hello > "C:\\Users\\proview\\a file.txt" && type C:\\Users\\proview\\a.txt && copy C:\\Users\\proview\\a.txt C:\\Users\\proview\\b.txt && del C:\\Users\\proview\\old.txt`,
+    "C:\\workspace",
+  );
+
+  assert.ok(effects.some((effect) => effect.path === "C:\\Users\\proview\\a file.txt" && effect.access === "write"));
+  assert.ok(effects.some((effect) => effect.path === "C:\\Users\\proview\\a.txt" && effect.access === "read"));
+  assert.ok(effects.some((effect) => effect.path === "C:\\Users\\proview\\b.txt" && effect.access === "write"));
+  assert.ok(effects.some((effect) => effect.path === "C:\\Users\\proview\\old.txt" && effect.access === "write"));
+});
+
+test("shell effect analyzer treats Windows cmd dynamic paths as unresolved", () => {
+  const effects = analyzeShellScript(
+    `type %USERPROFILE%\\a.txt && echo hello > %TARGET%\\b.txt`,
+    "C:\\workspace",
+  );
+
+  assert.ok(effects.some((effect) => effect.rawToken === "%USERPROFILE%\\a.txt" && effect.warning === "shell-dynamic-path-unresolved" && effect.access === "read"));
+  assert.ok(effects.some((effect) => effect.rawToken === "%TARGET%\\b.txt" && effect.warning === "shell-dynamic-path-unresolved" && effect.access === "write"));
+});
+
+test("shell effect analyzer extracts Windows cmd /c scripts from argv", () => {
+  const effects = analyzeShellEffects(
+    ["cmd.exe", "/d", "/s", "/c", "type C:\\Users\\proview\\a.txt"],
+    "C:\\workspace",
+  );
+
+  assert.ok(effects.some((effect) => effect.path === "C:\\Users\\proview\\a.txt" && effect.access === "read"));
 });
 
 test("package exposes the raxcell executable", () => {

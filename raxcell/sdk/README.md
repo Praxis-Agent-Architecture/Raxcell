@@ -274,7 +274,7 @@ Then retry `prepareRun()` or call `run()` with the updated request.
 
 ## Shell Filesystem Effects
 
-In `0.1.5`, Linux `prepareRun()` analyzes common POSIX shell filesystem effects before lowering to bubblewrap. Raxcell reports facts; Praxis still owns policy, approval, and audit decisions.
+In `0.1.5`, `prepareRun()` analyzes common shell filesystem effects before backend lowering. Linux and macOS use the POSIX shell analyzer. Windows native requests also recognize common `cmd.exe /c` filesystem effects. Raxcell reports facts; Praxis still owns policy, approval, and audit decisions.
 
 Concrete paths outside declared roots return `policyDecision.reason = "path-outside-declared-roots"` with contextual `required` values:
 
@@ -286,7 +286,12 @@ Concrete paths outside declared roots return `policyDecision.reason = "path-outs
 - `cat`, `grep`, and non-in-place `sed`: `read`;
 - Python `open(..., "w" | "a")`, `Path(...).write_text(...)`: `write`;
 - Node `fs.writeFileSync(...)` and `fs.appendFileSync(...)`: `write`;
-- Python/Node read calls: `read`.
+- Python/Node read calls: `read`;
+- Windows `cmd.exe /c` redirection: `write`;
+- Windows `type`: `read`;
+- Windows `copy` / `xcopy`: source `read`, destination `write`;
+- Windows `move`: source `readwrite`, destination `write`;
+- Windows `del`, `erase`, `md`, and `rd`: `write`.
 
 Dynamic paths fail closed as environment facts, not policy grants:
 
@@ -303,7 +308,7 @@ Dynamic paths fail closed as environment facts, not policy grants:
 }
 ```
 
-Raxcell does not expand `$HOME`, `${TARGET}`, `~`, backticks, or command substitutions from `process.env` or `request.command.env`. Praxis can surface this gap, ask the user, rewrite the command into concrete paths, or deny.
+Raxcell does not expand `$HOME`, `${TARGET}`, `~`, backticks, command substitutions, `%USERPROFILE%`, `%TARGET%`, or delayed `!VAR!` references from `process.env` or `request.command.env`. Praxis can surface this gap, ask the user, rewrite the command into concrete paths, or deny.
 
 `filesystemLowering.effects` contains structured analyzer facts for UI/audit display:
 

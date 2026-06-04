@@ -1,4 +1,4 @@
-import { isAbsolute, normalize, resolve } from "node:path";
+import { isAbsolute, normalize, resolve, win32 } from "node:path";
 
 export type ShellEffectAccess = "read" | "write" | "readwrite";
 
@@ -24,8 +24,21 @@ type CommandSegment = {
 };
 
 const SHELL_NAMES = new Set(["sh", "bash", "dash", "zsh", "fish"]);
-const READ_COMMANDS = new Set(["cat", "grep", "head", "tail", "less", "more", "awk"]);
-const WRITE_COMMANDS = new Set(["touch", "mkdir", "rm", "rmdir", "chmod", "chown", "chgrp"]);
+const CMD_SHELL_NAMES = new Set(["cmd", "cmd.exe"]);
+const READ_COMMANDS = new Set(["cat", "grep", "head", "tail", "less", "more", "awk", "type"]);
+const WRITE_COMMANDS = new Set([
+  "touch",
+  "mkdir",
+  "rm",
+  "rmdir",
+  "chmod",
+  "chown",
+  "chgrp",
+  "del",
+  "erase",
+  "md",
+  "rd",
+]);
 
 export function analyzeShellEffects(argv: string[], cwd: string): ShellEffect[] {
   const shellScript = shellScriptFromArgv(argv);
@@ -44,9 +57,15 @@ function shellScriptFromArgv(argv: string[]): string | null {
   if (argv.length < 3) {
     return null;
   }
-  const executable = basename(argv[0]);
+  const executable = basename(argv[0]).toLowerCase();
   if (!SHELL_NAMES.has(executable)) {
-    return null;
+    if (!CMD_SHELL_NAMES.has(executable)) {
+      return null;
+    }
+    const optionIndex = argv.findIndex((arg, index) => {
+      return index > 0 && arg.toLowerCase() === "/c";
+    });
+    return optionIndex >= 0 ? argv[optionIndex + 1] ?? "" : null;
   }
   const optionIndex = argv.findIndex((arg, index) => index > 0 && (arg === "-c" || arg === "-lc" || arg === "-cl"));
   return optionIndex >= 0 ? argv[optionIndex + 1] ?? "" : null;
@@ -78,24 +97,24 @@ function analyzeCommandTokens(tokens: Token[], cwd: string, commandHint: string)
   const command = basename(tokens[0]?.text ?? commandHint);
   const args = tokens.slice(1);
 
-  if (command === "cp" || command === "install" || command === "rsync") {
-    const operands = nonOptionArgs(args);
+  if (command === "cp" || command === "install" || command === "rsync" || command === "copy" || command === "xcopy") {
+    const operands = nonOptionArgs(args, commandUsesSlashOptions(command) ? ["/", "-"] : ["-"]);
     if (operands.length >= 2) {
       for (const source of operands.slice(0, -1)) {
         effects.push(effectFromToken(source, "read", command, `${command}-source`, cwd));
       }
       effects.push(effectFromToken(operands[operands.length - 1], "write", command, `${command}-destination`, cwd));
     }
-  } else if (command === "mv") {
-    const operands = nonOptionArgs(args);
+  } else if (command === "mv" || command === "move") {
+    const operands = nonOptionArgs(args, commandUsesSlashOptions(command) ? ["/", "-"] : ["-"]);
     if (operands.length >= 2) {
       for (const source of operands.slice(0, -1)) {
-        effects.push(effectFromToken(source, "readwrite", command, "mv-source", cwd));
+        effects.push(effectFromToken(source, "readwrite", command, `${command}-source`, cwd));
       }
-      effects.push(effectFromToken(operands[operands.length - 1], "write", command, "mv-destination", cwd));
+      effects.push(effectFromToken(operands[operands.length - 1], "write", command, `${command}-destination`, cwd));
     }
   } else if (WRITE_COMMANDS.has(command)) {
-    for (const arg of nonOptionArgs(args)) {
+    for (const arg of nonOptionArgs(args, commandUsesSlashOptions(command) ? ["/", "-"] : ["-"])) {
       effects.push(effectFromToken(arg, "write", command, `${command}-target`, cwd));
     }
   } else if (command === "sed") {
@@ -124,7 +143,7 @@ function analyzeCommandTokens(tokens: Token[], cwd: string, commandHint: string)
   }
 
   for (const token of tokens) {
-    if (isDynamicPathToken(token.text) && token.text.includes("/")) {
+    if (isDynamicPathToken(token.text) && looksLikePathToken(token.text)) {
       effects.push(effectFromToken(token, "read", command || "unknown", "dynamic-path-token", cwd));
     }
   }
@@ -301,11 +320,16 @@ function effectFromToken(
 }
 
 function normalizeConcretePath(path: string, cwd: string): string {
+  if (isWindowsPathLike(path) || isWindowsPathLike(cwd)) {
+    return win32.normalize(win32.isAbsolute(path) ? path : win32.resolve(cwd, path));
+  }
   return normalize(isAbsolute(path) ? path : resolve(cwd, path));
 }
 
-function nonOptionArgs(args: Token[]): Token[] {
-  return args.filter((arg) => !arg.text.startsWith("-"));
+function nonOptionArgs(args: Token[], optionPrefixes: string[] = ["-"]): Token[] {
+  return args.filter((arg) => {
+    return !optionPrefixes.some((prefix) => arg.text.startsWith(prefix));
+  });
 }
 
 function likelyFileArgs(args: Token[], options: { skipNextAfter: string[] }): Token[] {
@@ -319,7 +343,7 @@ function likelyFileArgs(args: Token[], options: { skipNextAfter: string[] }): To
     if (arg.text.startsWith("-")) {
       continue;
     }
-    if (arg.text.includes("/") || isDynamicPathToken(arg.text) || hasGlob(arg.text)) {
+    if (looksLikePathToken(arg.text) || isDynamicPathToken(arg.text) || hasGlob(arg.text)) {
       output.push(arg);
     }
   }
@@ -343,7 +367,11 @@ function stripAssignmentPrefix(token: Token): Token {
 }
 
 function isDynamicPathToken(token: string): boolean {
-  return token.startsWith("~") || token.includes("$") || token.includes("`");
+  return token.startsWith("~") ||
+    token.includes("$") ||
+    token.includes("`") ||
+    /%[^%]+%/.test(token) ||
+    /![^!]+!/.test(token);
 }
 
 function hasGlob(token: string): boolean {
@@ -351,7 +379,19 @@ function hasGlob(token: string): boolean {
 }
 
 function basename(path: string): string {
-  return path.split("/").filter(Boolean).pop() ?? path;
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+function looksLikePathToken(token: string): boolean {
+  return token.includes("/") || token.includes("\\") || /^[A-Za-z]:/.test(token);
+}
+
+function isWindowsPathLike(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.includes("\\");
+}
+
+function commandUsesSlashOptions(command: string): boolean {
+  return ["copy", "xcopy", "move", "del", "erase", "md", "rd"].includes(command);
 }
 
 function dedupeEffects(effects: ShellEffect[]): ShellEffect[] {
