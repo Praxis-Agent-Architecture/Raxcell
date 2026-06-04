@@ -978,6 +978,7 @@ function plannedWindowsNativeArtifact(
       runnerProtocol: "raxcell.windowsRunner.run.v1",
       normalizedCwd: normalizeAbsoluteForBackend(request.command.cwd, backend),
       commandEnvMode: "clean",
+      writeGrantMaterialization: "runner-owned",
       commandEnv: buildSandboxCommandEnv(request.command.env),
       tokenMode: aclRoots.some((root) => root.access === "write")
         ? "writable-roots-capability"
@@ -1029,6 +1030,7 @@ function windowsRunnerRequest(
     },
     normalizedCwd: normalizeAbsoluteForBackend(request.command.cwd, backend),
     commandEnvMode: "clean",
+    writeGrantMaterialization: "runner-owned",
     enforcement: request.enforcement,
     action: request.action,
     filesystemLowering,

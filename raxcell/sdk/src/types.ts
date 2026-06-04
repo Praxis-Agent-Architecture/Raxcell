@@ -177,6 +177,7 @@ export type WindowsRunnerRunRequest = {
   };
   normalizedCwd: string;
   commandEnvMode: "clean";
+  writeGrantMaterialization: "runner-owned";
   enforcement: EnforcementSpec;
   action: RunRequest["action"];
   filesystemLowering: FileSystemLoweringReport;

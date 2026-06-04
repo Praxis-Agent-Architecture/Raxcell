@@ -395,6 +395,7 @@ Native planned artifact formats:
   - `data.runner`: resolved runner path, when available.
   - `data.normalizedCwd`: command cwd normalized with Windows path semantics when the request uses Windows-like paths.
   - `data.commandEnvMode`: `clean`.
+  - `data.writeGrantMaterialization`: `runner-owned`; the native runner owns ACL application and any safe host precreation/copy-out needed for approved write roots.
   - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
   - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
   - `data.aclRoots`: planned filesystem ACL roots; Windows-like paths such as `C:\workspace` keep Windows path shape even when a non-Windows host is only producing planned facts.
@@ -412,6 +413,7 @@ The npm package exports this stdin shape as `WindowsRunnerRunRequest`; runner im
   "command": {},
   "normalizedCwd": "C:\\workspace",
   "commandEnvMode": "clean",
+  "writeGrantMaterialization": "runner-owned",
   "enforcement": {},
   "filesystemLowering": {},
   "tokenMode": "writable-roots-capability",

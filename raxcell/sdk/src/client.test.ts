@@ -946,6 +946,7 @@ test("prepare-run for unattached native backend returns environment facts and pl
     assert.equal(response.backendArtifacts[0].data.attached, false);
     assert.equal(response.backendArtifacts[0].data.runnerProtocol, "raxcell.windowsRunner.run.v1");
     assert.equal(response.backendArtifacts[0].data.commandEnvMode, "clean");
+    assert.equal(response.backendArtifacts[0].data.writeGrantMaterialization, "runner-owned");
     assert.deepEqual(response.backendArtifacts[0].data.commandEnv, {
       PATH: DEFAULT_COMMAND_PATH,
     });
@@ -1001,6 +1002,7 @@ test("prepare-run for windows-native preserves Windows path facts on non-Windows
     },
   ]);
   assert.equal(artifact.data.normalizedCwd, "C:\\workspace");
+  assert.equal(artifact.data.writeGrantMaterialization, "runner-owned");
   assert.ok(response.filesystemLowering?.effects?.some((effect) => {
     return effect.path === "C:\\workspace\\input.txt" && effect.access === "read";
   }));
@@ -1329,6 +1331,7 @@ test("windows runner request type exposes native runner protocol surface", () =>
     },
     normalizedCwd: "C:\\workspace",
     commandEnvMode: "clean",
+    writeGrantMaterialization: "runner-owned",
     enforcement: {
       profile: "workspace-write",
       filesystem: {
