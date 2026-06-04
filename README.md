@@ -30,6 +30,11 @@ macOS and Windows are protocol-visible native backend families:
 
 The `0.1.x` npm CLI only executes the Linux bubblewrap backend. macOS and Windows preferences are still useful for `probe`, `explain-backend`, and fail-closed `prepare-run` responses: they return native capability facts, planned lowering artifacts, and environment gaps without pretending a native runner is attached.
 
+Native planned artifacts are backend-specific:
+
+- `macos-seatbelt-sbpl-profile`: planned `/usr/bin/sandbox-exec` invocation, generated SBPL profile text, read/write roots, network deny state, and analyzer effects.
+- `windows-native-token-acl-plan`: planned token mode, ACL roots, network block state, process/resource limits, and analyzer effects.
+
 ## Boundary
 
 Raxcell is an execution provider, not a policy engine.

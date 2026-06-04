@@ -533,30 +533,127 @@ function prepareUnattachedNative(
       policyDecision: null,
       environmentGap: gap,
       filesystemLowering,
-      backendArtifacts: [
-        {
-          backend,
-          format: `${backend}-planned-lowering`,
-          arguments: [],
-          data: {
-            attached: false,
-            hostPlatform: hostPlatformForBackend(backend),
-            selectedOn: process.platform,
-            filesystemEffects: filesystemLowering.effects ?? [],
-          },
-          warnings: [
-            {
-              code: "NATIVE_BACKEND_RUNNER_UNATTACHED",
-              message: `${backend} is protocol-visible but not executable in the 0.1.x npm CLI.`,
-            },
-          ],
-        },
-      ],
+      backendArtifacts: [plannedNativeArtifact(backend, request, filesystemLowering)],
       capabilityReport,
     },
     bwrapExecutable: null,
     bwrapArgs: [],
   };
+}
+
+function plannedNativeArtifact(
+  backend: BackendFamily,
+  request: RunRequest,
+  filesystemLowering: FileSystemLoweringReport,
+): BackendLoweringArtifact {
+  if (backend === "macos-seatbelt") {
+    return plannedMacosSeatbeltArtifact(request, filesystemLowering);
+  }
+  return plannedWindowsNativeArtifact(backend, request, filesystemLowering);
+}
+
+function plannedMacosSeatbeltArtifact(
+  request: RunRequest,
+  filesystemLowering: FileSystemLoweringReport,
+): BackendLoweringArtifact {
+  const profile = macosSeatbeltProfile(request, filesystemLowering);
+  return {
+    backend: "macos-seatbelt",
+    format: "macos-seatbelt-sbpl-profile",
+    arguments: ["/usr/bin/sandbox-exec", "-p", profile, "--", ...request.command.argv],
+    data: {
+      attached: false,
+      executable: "/usr/bin/sandbox-exec",
+      hostPlatform: "darwin",
+      selectedOn: process.platform,
+      profile,
+      readRoots: loweredRootPaths(filesystemLowering, "read"),
+      writeRoots: loweredRootPaths(filesystemLowering, "write"),
+      networkDenied: request.enforcement.network === "deny",
+      filesystemEffects: filesystemLowering.effects ?? [],
+    },
+    warnings: [nativeRunnerWarning("macos-seatbelt")],
+  };
+}
+
+function macosSeatbeltProfile(
+  request: RunRequest,
+  filesystemLowering: FileSystemLoweringReport,
+): string {
+  const lines = [
+    "(version 1)",
+    "(deny default)",
+    "(allow process*)",
+    "(allow signal)",
+    "(allow sysctl-read)",
+    "(allow file-read-metadata)",
+  ];
+  for (const root of loweredRootPaths(filesystemLowering, "read")) {
+    lines.push(`(allow file-read* (subpath ${sbplString(root)}))`);
+  }
+  for (const root of loweredRootPaths(filesystemLowering, "write")) {
+    lines.push(`(allow file-read* (subpath ${sbplString(root)}))`);
+    lines.push(`(allow file-write* (subpath ${sbplString(root)}))`);
+  }
+  lines.push(
+    request.enforcement.network === "deny"
+      ? "(deny network*)"
+      : "(allow network*)",
+  );
+  return lines.join("\n");
+}
+
+function plannedWindowsNativeArtifact(
+  backend: BackendFamily,
+  request: RunRequest,
+  filesystemLowering: FileSystemLoweringReport,
+): BackendLoweringArtifact {
+  const aclRoots = filesystemLowering.declaredRoots
+    .filter((root) => root.access === "read" || root.access === "write")
+    .map((root) => ({
+      path: root.path,
+      access: root.access,
+      source: root.source,
+    }));
+  return {
+    backend,
+    format: `${backend}-token-acl-plan`,
+    arguments: [],
+    data: {
+      attached: false,
+      hostPlatform: "win32",
+      selectedOn: process.platform,
+      tokenMode: aclRoots.some((root) => root.access === "write")
+        ? "writable-roots-capability"
+        : "read-only-capability",
+      aclRoots,
+      networkBlocked: request.enforcement.network === "deny",
+      processLimits: request.enforcement.process ?? {},
+      resourceLimits: request.enforcement.resources ?? {},
+      filesystemEffects: filesystemLowering.effects ?? [],
+    },
+    warnings: [nativeRunnerWarning(backend)],
+  };
+}
+
+function loweredRootPaths(
+  filesystemLowering: FileSystemLoweringReport,
+  access: "read" | "write",
+): string[] {
+  return filesystemLowering.declaredRoots
+    .filter((root) => root.access === access)
+    .map((root) => root.path);
+}
+
+function nativeRunnerWarning(backend: BackendFamily): { code: string; message: string } {
+  return {
+    code: "NATIVE_BACKEND_RUNNER_UNATTACHED",
+    message: `${backend} is protocol-visible but not executable in the 0.1.x npm CLI.`,
+  };
+}
+
+function sbplString(value: string): string {
+  return JSON.stringify(value);
 }
 
 async function runBackend(request: RunRequest): Promise<RunResponse> {

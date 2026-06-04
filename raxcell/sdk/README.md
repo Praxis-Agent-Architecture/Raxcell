@@ -375,6 +375,19 @@ Raxcell keeps macOS Seatbelt and Windows native runners out of the `0.1.5` npm C
 
 When selected through `backendPreference`, these backends return native capability facts and planned lowering artifacts, then fail closed with `environmentGap.reason = "host-platform-mismatch"` or `environmentGap.reason = "native-backend-runner-unattached"`. They do not ask for approval, grant policy, or fall back to host execution.
 
+Native planned artifact formats:
+
+- `macos-seatbelt-sbpl-profile`
+  - `arguments`: planned `/usr/bin/sandbox-exec -p <profile> -- <argv...>`.
+  - `data.profile`: generated SBPL profile text.
+  - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
+  - `data.networkDenied`: backend network intent.
+- `windows-native-token-acl-plan`
+  - `data.tokenMode`: `read-only-capability` or `writable-roots-capability`.
+  - `data.aclRoots`: planned filesystem ACL roots.
+  - `data.networkBlocked`: WFP/network intent.
+  - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
+
 ## Installation From Local Tarball
 
 After building the tarball:

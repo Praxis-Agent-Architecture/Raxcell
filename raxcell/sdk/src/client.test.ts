@@ -735,8 +735,59 @@ test("prepare-run for unattached native backend returns environment facts and pl
     assert.equal(response.environmentGap?.reason, "host-platform-mismatch");
     assert.deepEqual(response.filesystemLowering?.runtimeRoots, []);
     assert.ok(response.filesystemLowering?.effects?.some((effect) => effect.rawToken === "created.txt"));
-    assert.equal(response.backendArtifacts[0].format, "windows-native-planned-lowering");
+    assert.equal(response.backendArtifacts[0].format, "windows-native-token-acl-plan");
     assert.equal(response.backendArtifacts[0].data.attached, false);
+    assert.equal(response.backendArtifacts[0].data.tokenMode, "writable-roots-capability");
+    assert.equal(response.backendArtifacts[0].data.networkBlocked, true);
+    assert.deepEqual(response.backendArtifacts[0].data.aclRoots, [
+      {
+        path: workspace,
+        access: "write",
+        source: "declared",
+      },
+    ]);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("prepare-run for macos-seatbelt exposes planned SBPL profile artifact", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-macos-prepare-workspace-"));
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    backendPreference: ["macos-seatbelt"],
+    command: {
+      argv: ["/bin/sh", "-lc", "cat file.txt"],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+      },
+      network: "deny",
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    const artifact = response.backendArtifacts[0];
+    assert.equal(response.ok, false);
+    assert.equal(response.backend, "macos-seatbelt");
+    assert.equal(response.environmentGap?.reason, "host-platform-mismatch");
+    assert.equal(artifact.format, "macos-seatbelt-sbpl-profile");
+    assert.equal(artifact.arguments[0], "/usr/bin/sandbox-exec");
+    assert.match(String(artifact.data.profile), /\(deny default\)/);
+    assert.match(String(artifact.data.profile), /\(deny network\*\)/);
+    assert.deepEqual(artifact.data.readRoots, [workspace]);
+    assert.deepEqual(artifact.data.writeRoots, []);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
