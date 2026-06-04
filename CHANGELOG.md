@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Fixed shell path extraction so relative paths such as `raxcell_live_probe/hello.txt` resolve against `command.cwd`.
+- Fixed shell redirection preflight to avoid misreading relative paths with slashes as absolute paths such as `/hello.txt`.
+
 ## 0.1.1
 
 - Added the `raxcell` npm bin at `dist/cli.js`.

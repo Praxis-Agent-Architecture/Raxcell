@@ -129,6 +129,43 @@ process.stdin.on("end", () => {
   }
 });
 
+test("cli resolves shell redirection relative paths against command cwd", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-relative-path-"));
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    command: {
+      argv: [
+        "/bin/sh",
+        "-lc",
+        "mkdir -p raxcell_live_probe && printf 'raxcell-ok' > raxcell_live_probe/hello.txt",
+      ],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    assert.equal(response.ok, true);
+    assert.equal(response.policyDecision, null);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("probe request type accepts all first-class backend families", () => {
   const request: ProbeRequest = {
     kind: "raxcell.probe.v1",

@@ -4,7 +4,7 @@ Raxcell is an execution-enforcement sandbox SDK for agent runtimes.
 
 This package is the TypeScript client facade. It calls a Raxcell CLI binary through JSON stdin/stdout and exposes typed protocol objects for Praxis or any other agent harness.
 
-Version: `0.1.1`
+Version: `0.1.2`
 
 ## What This Package Is
 
@@ -40,7 +40,7 @@ Praxis Agent / Harness
   -> macOS Seatbelt / Windows native later
 ```
 
-## Current 0.1.1 Runtime Contract
+## Current 0.1.2 Runtime Contract
 
 The package exposes a `raxcell` executable and the client expects a CLI binary path.
 
@@ -298,7 +298,7 @@ console.log(bwrap?.arguments);
 
 ## Linux Status
 
-Linux is usable in `0.1.1`:
+Linux is usable in `0.1.2`:
 
 - `probe` detects `linux-bubblewrap`;
 - `prepareRun` returns filesystem lowering and bubblewrap argv;
@@ -321,7 +321,7 @@ The protocol already exposes backend families:
 - `windows-elevated`
 - `windows-unelevated`
 
-Raxcell keeps macOS Seatbelt and Windows native runners out of the `0.1.1` npm CLI. They remain future backend work.
+Raxcell keeps macOS Seatbelt and Windows native runners out of the `0.1.2` npm CLI. They remain future backend work.
 
 On unsupported hosts, those backends fail closed.
 
@@ -330,7 +330,7 @@ On unsupported hosts, those backends fail closed.
 After building the tarball:
 
 ```bash
-pnpm add /path/to/praxis-ai-raxcell-0.1.1.tgz
+pnpm add /path/to/praxis-ai-raxcell-0.1.2.tgz
 ```
 
 Then import:
@@ -345,7 +345,7 @@ import {
 
 ## Version Notes
 
-`0.1.1` is a Linux-first integration package. The API is intentionally small:
+`0.1.2` is a Linux-first integration package. The API is intentionally small:
 
 - `probe`
 - `explainBackend`

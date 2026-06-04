@@ -566,8 +566,9 @@ function argvPathPolicyDecision(
   policyGrants: PolicyGrant[],
 ): PolicyDecisionRequired | null {
   const roots = allowedRoots(request, policyGrants);
+  const cwd = normalizeAbsolute(request.command.cwd);
   for (const token of request.command.argv.slice(1)) {
-    for (const candidate of absolutePathsInToken(token)) {
+    for (const candidate of pathsInToken(token, cwd)) {
       if (isRuntimePath(candidate)) {
         continue;
       }
@@ -585,13 +586,26 @@ function argvPathPolicyDecision(
   return null;
 }
 
-function absolutePathsInToken(token: string): string[] {
+function pathsInToken(token: string, cwd: string): string[] {
   if (isAbsolute(token)) {
     return [normalizeAbsolute(token)];
   }
-  return [...token.matchAll(/\/[^\s"'`<>|;&()]+/g)].map((match) =>
-    normalizeAbsolute(match[0]),
-  );
+  const candidates = new Set<string>();
+  for (const shellToken of shellPathTokens(token)) {
+    if (isAbsolute(shellToken)) {
+      candidates.add(normalizeAbsolute(shellToken));
+    } else if (shellToken.includes("/")) {
+      candidates.add(resolve(cwd, shellToken));
+    }
+  }
+  return [...candidates];
+}
+
+function shellPathTokens(token: string): string[] {
+  return token
+    .split(/[\s"'`<>|;&()]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }
 
 function allowedRoots(
