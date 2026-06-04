@@ -383,6 +383,17 @@ When selected through `backendPreference`, Windows backends return native capabi
 
 Native planned artifact formats:
 
+- `linux-bubblewrap-argv`
+  - `arguments`: complete `bwrap` argv used for execution.
+  - `data.commandEnvMode`: `clean`.
+  - `data.writeGrantMaterialization`: `raxcell-precreate`; Raxcell precreates missing approved writable grant paths before launching bubblewrap.
+  - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
+  - `data.rootRules`: source-aware read/write roots with `source=declared|policy-grant` for audit display.
+  - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
+  - `data.runtimeRoots`: backend-runtime read roots mounted so bubblewrap can execute system tools and libraries.
+  - `data.networkMode`: common audit value, `deny` or `allow`.
+  - `data.timeoutMs`: parent-enforced timeout for the spawned `bwrap` process.
+  - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
 - `macos-seatbelt-sbpl-profile`
   - `arguments`: planned `/usr/bin/sandbox-exec -p <profile> -- <argv...>`.
   - `data.profile`: generated SBPL profile text.

@@ -601,7 +601,18 @@ function prepareLinux(request: RunRequest): PreparedBackendRun {
       arguments: [bwrapExecutable, ...bwrapArgs],
       data: {
         executable: bwrapExecutable,
+        commandEnvMode: "clean",
+        writeGrantMaterialization: writeGrantMaterializationMode("linux-bubblewrap"),
+        commandEnv: buildSandboxCommandEnv(request.command.env),
+        rootRules: loweredFilesystemRoots(filesystemLowering),
+        readRoots: loweredReadableRootPaths(filesystemLowering),
+        writeRoots: loweredRootPaths(filesystemLowering, "write"),
+        runtimeRoots: filesystemLowering.runtimeRoots,
         networkMode: networkModeForRequest(request),
+        timeoutMs: getTimeoutMs(request),
+        processLimits: request.enforcement.process ?? {},
+        resourceLimits: request.enforcement.resources ?? {},
+        filesystemEffects: filesystemLowering.effects ?? [],
       },
       warnings: filesystemLowering.warnings,
     },
@@ -918,7 +929,7 @@ function plannedMacosSeatbeltArtifact(
       writeGrantMaterialization: writeGrantMaterializationMode("macos-seatbelt"),
       commandEnv: buildSandboxCommandEnv(request.command.env),
       rootRules: loweredFilesystemRoots(filesystemLowering),
-      readRoots: loweredRootPaths(filesystemLowering, "read"),
+      readRoots: loweredReadableRootPaths(filesystemLowering),
       writeRoots: loweredRootPaths(filesystemLowering, "write"),
       runtimeRoots: filesystemLowering.runtimeRoots,
       networkDenied: request.enforcement.network === "deny",
@@ -1009,6 +1020,14 @@ function loweredRootPaths(
 ): string[] {
   return filesystemLowering.declaredRoots
     .filter((root) => root.access === access)
+    .map((root) => root.path);
+}
+
+function loweredReadableRootPaths(
+  filesystemLowering: FileSystemLoweringReport,
+): string[] {
+  return filesystemLowering.declaredRoots
+    .filter((root) => root.access === "read" || root.access === "write")
     .map((root) => root.path);
 }
 

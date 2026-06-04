@@ -458,9 +458,41 @@ test("cli resolves shell redirection relative paths against command cwd", () => 
     });
     assert.equal(result.status, 0, result.stderr);
     const response = JSON.parse(result.stdout) as PrepareRunResponse;
+    const artifact = response.backendArtifacts[0];
     assert.equal(response.ok, true);
     assert.equal(response.policyDecision, null);
-    assert.equal(response.backendArtifacts[0].data.networkMode, "deny");
+    assert.equal(artifact.data.networkMode, "deny");
+    assert.equal(artifact.data.commandEnvMode, "clean");
+    assert.deepEqual(artifact.data.commandEnv, {
+      PATH: DEFAULT_COMMAND_PATH,
+    });
+    assert.equal(artifact.data.writeGrantMaterialization, "raxcell-precreate");
+    assert.deepEqual(artifact.data.readRoots, [workspace]);
+    assert.deepEqual(artifact.data.writeRoots, [workspace]);
+    assert.ok(Array.isArray(artifact.data.runtimeRoots));
+    assert.ok((artifact.data.rootRules as unknown[]).some((root) => {
+      return typeof root === "object" &&
+        root !== null &&
+        "path" in root &&
+        "access" in root &&
+        "source" in root &&
+        root.path === workspace &&
+        root.access === "write" &&
+        root.source === "declared";
+    }));
+    assert.equal(artifact.data.timeoutMs, 1000);
+    assert.deepEqual(artifact.data.processLimits, {
+      spawn: true,
+    });
+    assert.deepEqual(artifact.data.resourceLimits, {
+      timeoutMs: 1000,
+    });
+    assert.ok((artifact.data.filesystemEffects as unknown[]).some((effect) => {
+      return typeof effect === "object" &&
+        effect !== null &&
+        "rawToken" in effect &&
+        effect.rawToken === "raxcell_live_probe/hello.txt";
+    }));
   } finally {
     rmSync(workspace, { recursive: true, force: true });
     rmSync(fakeBinDir, { recursive: true, force: true });
