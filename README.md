@@ -2,76 +2,89 @@
 
 Raxcell is an execution-enforcement sandbox SDK for agent runtimes.
 
-It gives an agent harness a small, typed control surface for probing sandbox capabilities, preparing a sandboxed command, auditing backend lowering, and then executing the command through a platform backend.
+It gives an agent harness a small control surface for probing sandbox capability, preparing an execution request, reporting filesystem/backend lowering facts, and running the command through a platform sandbox backend.
 
-Raxcell is not Praxis-specific. Praxis is the first target runtime, but the contract is intended to be usable by any agent framework that needs a declarative sandbox boundary.
+Raxcell is not Praxis-specific. Praxis is the first target runtime, but the contract is intended for any agent framework that needs a reusable, declarative sandbox boundary.
 
-## Status
+## Current Status
 
-Current version: `0.1.4`
+Current npm package: `@praxis-ai/raxcell@0.1.5`
 
-Linux is usable today:
+Linux is usable today through the TypeScript CLI package:
 
-- `linux-bubblewrap` can run commands through bubblewrap.
+- `linux-bubblewrap` executes commands through bubblewrap.
 - Filesystem read/write roots are declared per request.
-- Network deny is enforced with bubblewrap network isolation.
+- Explicit `policyGrants` can add host path access after an upper runtime has approved it.
+- Write grants are mounted so approved external writes land on the host, not in a sandbox shadow path.
+- Network deny uses bubblewrap network isolation.
 - Timeouts are enforced by Raxcell process management.
-- Missing roots fail closed.
-- `command.cwd` outside declared roots returns `POLICY_DECISION_REQUIRED`.
-- Upper runtimes can retry with explicit `policyGrants`.
-- `prepareRun` returns `filesystemLowering` and backend-specific `backendArtifacts`.
+- `prepareRun` returns `filesystemLowering`, analyzer effects, and backend-specific `backendArtifacts`.
 - Linux `backendArtifacts` include the complete bubblewrap argv.
 
-macOS and Windows are protocol-visible but not enabled as executable runners in `0.1.4`:
+macOS and Windows are protocol-visible future backend families:
 
-- `macos-seatbelt` has an internal Seatbelt lowering artifact model.
-- `windows-elevated` and `windows-unelevated` have internal token/ACL/WFP lowering artifact models.
-- Unsupported or unattached native backends fail closed.
+- `macos-seatbelt`
+- `windows-elevated`
+- `windows-unelevated`
+- `windows-native`
 
-## Architecture
+The `0.1.x` npm CLI only executes the Linux bubblewrap backend. Unsupported or unattached backends fail closed.
 
-From an agent runtime's perspective:
+## Boundary
 
-```text
-Agent / Harness
-  -> Runtime policy middleware
-  -> Raxcell TypeScript client
-  -> raxcell CLI JSON stdin/stdout protocol
-  -> linux-bubblewrap / future macOS Seatbelt / future Windows native
-```
+Raxcell is an execution provider, not a policy engine.
 
 Raxcell owns:
 
-- execution boundaries;
 - backend capability facts;
 - backend lowering reports;
-- backend-specific artifacts;
-- fail-closed execution behavior.
+- filesystem access facts;
+- sandbox process execution;
+- fail-closed environment gaps and denials.
 
 Upper runtimes own:
 
-- approval;
-- human gates;
 - policy matrices;
+- approval and human gates;
+- audit persistence;
 - tool semantics;
-- model behavior;
-- prompt or intent interpretation.
+- fallback decisions;
+- model behavior and prompt interpretation.
 
-## TypeScript Package
-
-The TypeScript facade package is:
+In Praxis terms:
 
 ```text
-@praxis-ai/raxcell@0.1.5
+Praxis / Agent Harness
+  -> policy middleware
+  -> RaxcellClient
+  -> raxcell CLI JSON stdin/stdout
+  -> linux-bubblewrap
 ```
 
-Install from npm:
+## Install
 
 ```bash
 pnpm add @praxis-ai/raxcell@0.1.5
 ```
 
-`@praxis-ai/raxcell@0.1.5` exposes a `raxcell` bin. Praxis can either resolve it from `PATH` after package installation, or pass an explicit development build path such as `raxcell/sdk/dist/cli.js`.
+The package exposes a `raxcell` binary:
+
+```bash
+raxcell --version
+raxcell probe
+raxcell explain-backend
+raxcell prepare-run < request.json
+raxcell run < request.json
+```
+
+For local development against this repository:
+
+```bash
+pnpm build:sdk
+RAXCELL_BIN=/home/proview/Desktop/Praxis_series/development/Raxcell/raxcell/sdk/dist/cli.js
+```
+
+## SDK Usage
 
 ```ts
 import { RaxcellClient, type RunRequest } from "@praxis-ai/raxcell";
@@ -91,7 +104,7 @@ const request: RunRequest = {
     metadata: {},
   },
   command: {
-    argv: ["/usr/bin/printf", "hello"],
+    argv: ["/bin/sh", "-lc", "printf hello"],
     cwd: "/workspace/project",
     env: {},
     stdin: null,
@@ -100,7 +113,7 @@ const request: RunRequest = {
     profile: "workspace-write-no-network",
     filesystem: {
       read: ["/workspace/project"],
-      write: ["/workspace/project/tmp"],
+      write: ["/workspace/project"],
     },
     network: "deny",
     process: {
@@ -116,64 +129,110 @@ const request: RunRequest = {
 };
 
 const prepared = await raxcell.prepareRun(request);
-if (!prepared.ok && prepared.policyDecision) {
-  // The runtime decides whether to deny, ask a user, rewrite policy, or grant.
+
+if (prepared.policyDecision) {
+  // The upper runtime decides whether to deny, ask, rewrite, or grant.
+}
+
+if (prepared.environmentGap) {
+  // The upper runtime decides how to handle an unresolved environment fact.
 }
 
 const result = await raxcell.run(request);
 ```
 
-See [raxcell/sdk/README.md](raxcell/sdk/README.md) for package-level API details.
+## Prepare-Run Semantics
 
-See [specs/raxcell/praxis-ts-middleware-integration.md](specs/raxcell/praxis-ts-middleware-integration.md) for the recommended Praxis middleware pattern.
+`prepareRun` is the main integration point for a policy middleware. It does not spawn the command.
 
-## Core Protocol Methods
+It can return:
 
-`probe`
+- `ok: true`: the requested sandbox can be prepared with the supplied declarations and grants.
+- `policyDecision.reason = "path-outside-declared-roots"`: a concrete path needs upper-runtime policy handling.
+- `environmentGap.reason = "shell-dynamic-path-unresolved"`: a dynamic shell path cannot be normalized safely.
+- `environmentGap.reason = "missing-backend-dependency"`: the selected backend cannot run on this host.
+- `denial`: Raxcell cannot safely lower or execute the request.
 
-Checks whether the requested backend is available and what it can enforce.
+Concrete external paths use `policyDecision`:
 
-`explainBackend`
+```json
+{
+  "reason": "path-outside-declared-roots",
+  "path": "/home/proview/a.txt",
+  "required": ["write"],
+  "publicSafeMessage": "The command references a path outside declared filesystem roots."
+}
+```
 
-Returns backend capability facts, operation schema, isolation primitives, runtime roots, and public-safe limitations.
+Dynamic shell paths use `environmentGap` and are not expanded by Raxcell:
 
-`resolveProfile`
+```json
+{
+  "reason": "shell-dynamic-path-unresolved",
+  "path": "$HOME/a.txt",
+  "required": ["write"],
+  "publicSafeMessage": "The command contains a dynamic shell path that Raxcell cannot safely normalize."
+}
+```
 
-Resolves a policy pack profile into explicit enforcement declarations.
+Raxcell does not resolve `$HOME`, `${TARGET}`, `~`, backticks, or command substitution from host env or request env. Praxis or another upper runtime can rewrite to concrete paths, ask for clarification, or deny.
 
-`prepareRun`
+## Shell Filesystem Effect Analyzer
 
-Dry-runs backend selection and lowering without spawning the command. This is the main middleware hook for policy engines.
+The Linux CLI includes a lightweight shell filesystem effect analyzer. It reports facts in `filesystemLowering.effects`.
 
-`run`
+Covered examples include:
 
-Executes the command through the selected backend.
+- `cp`, `install`, `rsync`: source read, destination write.
+- `mv`: source read/write, destination write.
+- `touch`, `mkdir`, `rm`, `chmod`, `chown`: write.
+- shell redirection and `tee`: write.
+- `cat`, `grep`, non-in-place `sed`: read.
+- `sed -i`, `perl -pi`: read/write.
+- Python `open(..., "w" | "a")`, `Path(...).write_text(...)`: write.
+- Node `fs.writeFileSync(...)`, `fs.appendFileSync(...)`: write.
+- Python/Node read APIs: read.
+- quoted paths, pipelines, multi-command shell, subshell, and glob patterns.
+
+This analyzer is intentionally conservative. It reports unresolved dynamic paths as environment gaps instead of guessing.
+
+## Run Semantics
+
+`run.ok` describes whether the sandbox backend executed normally, not whether the child command returned zero.
+
+If the sandbox launches correctly and the command exits nonzero:
+
+```json
+{
+  "ok": true,
+  "exitCode": 7,
+  "denial": null,
+  "environmentGap": null
+}
+```
+
+Use `exitCode`, `stdout`, and `stderr` for command-level behavior. Use `ok: false`, `denial`, `policyDecision`, or `environmentGap` for sandbox/provider-level failure.
 
 ## Repository Layout
 
+- `raxcell/sdk`: TypeScript npm package and Linux bubblewrap CLI.
 - `raxcell/sdk/src/types.ts`: JSON protocol types.
 - `raxcell/sdk/src/client.ts`: TypeScript client that spawns the CLI.
 - `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI and Linux bubblewrap runner.
-- `raxcell/sdk/src/shell-effects.ts`: Linux shell filesystem effect analyzer.
+- `raxcell/sdk/src/shell-effects.ts`: shell filesystem effect analyzer.
+- `raxcell`: Rust workspace retained for protocol/backend research.
 - `specs/raxcell`: extraction plans and integration docs.
 
 ## Verification
 
-Run the TypeScript SDK checks:
-
 ```bash
-pnpm --dir raxcell/sdk install --frozen-lockfile
-pnpm --dir raxcell/sdk build
-pnpm --dir raxcell/sdk test
-```
-
-Run Linux smoke commands:
-
-```bash
+pnpm install --frozen-lockfile
+pnpm build:sdk
+pnpm test:sdk
 raxcell/sdk/dist/cli.js --version
 raxcell/sdk/dist/cli.js probe
-printf '%s' "$RUN_REQUEST_JSON" | raxcell/sdk/dist/cli.js prepare-run
-printf '%s' "$RUN_REQUEST_JSON" | raxcell/sdk/dist/cli.js run
+raxcell/sdk/dist/cli.js explain-backend
+npm --prefix raxcell/sdk pack --dry-run --json
 ```
 
 ## Publishing
@@ -186,16 +245,10 @@ It publishes `raxcell/sdk` as `@praxis-ai/raxcell` when triggered by:
 - a published GitHub release;
 - a pushed `v*` tag.
 
-Configure the repository secret:
+Publishing requires the repository secret:
 
 ```text
 NPM_TOKEN
-```
-
-The workflow runs TypeScript build, TypeScript tests, and then:
-
-```bash
-npm publish --access public --provenance
 ```
 
 ## License
