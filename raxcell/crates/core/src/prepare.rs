@@ -18,6 +18,9 @@ pub fn prepare_run(request: RunRequest) -> PrepareRunResponse {
         Some(BackendFamily::MacosSeatbelt) => {
             macos_seatbelt::prepare_run(request, capability_report)
         }
+        Some(BackendFamily::WindowsNative) => {
+            windows_native::prepare_run(request, capability_report, BackendFamily::WindowsNative)
+        }
         Some(BackendFamily::WindowsElevated) => {
             windows_native::prepare_run(request, capability_report, BackendFamily::WindowsElevated)
         }

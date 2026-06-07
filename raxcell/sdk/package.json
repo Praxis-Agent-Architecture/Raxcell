@@ -16,7 +16,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "raxcell": "./dist/cli.js"
+    "raxcell": "./dist/cli.js",
+    "raxcell-windows-runner": "./dist/windows-runner.js"
   },
   "files": [
     "dist/backend-materialization.d.ts",
@@ -35,13 +36,16 @@
     "dist/spawn-env.js",
     "dist/types.d.ts",
     "dist/types.js",
+    "dist/windows-runner.d.ts",
+    "dist/windows-runner.js",
+    "scripts/mark-cli-executable.mjs",
     "scripts/smoke-macos-seatbelt.mjs",
     "scripts/smoke-windows-native.mjs",
     "README.md",
     "package.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "build": "tsc -p tsconfig.json && node scripts/mark-cli-executable.mjs",
     "test": "node --test dist/client.test.js",
     "smoke:macos": "node scripts/smoke-macos-seatbelt.mjs",
     "smoke:windows": "node scripts/smoke-windows-native.mjs"

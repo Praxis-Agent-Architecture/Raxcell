@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(scriptDir, "..");
 const cliPath = process.env.RAXCELL_BIN ?? resolve(packageRoot, "dist/cli.js");
+const windowsRunnerPath = process.env.RAXCELL_WINDOWS_RUNNER ?? resolve(packageRoot, "dist/windows-runner.js");
 const backend = "windows-native";
 const results = [];
 
@@ -97,6 +98,7 @@ function main() {
     outputSummary({
       backend,
       cliPath,
+      windowsRunnerPath,
       platform: process.platform,
       ready,
       results,
@@ -157,6 +159,10 @@ function runCli(args, input) {
   return spawnSync(executable, executableArgs, {
     encoding: "utf8",
     input: input === null ? undefined : JSON.stringify(input),
+    env: {
+      ...process.env,
+      RAXCELL_WINDOWS_RUNNER: windowsRunnerPath,
+    },
   });
 }
 

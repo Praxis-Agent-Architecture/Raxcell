@@ -25,6 +25,7 @@ import type {
 const testDir = dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = resolve(testDir, "../package.json");
 const cliPath = resolve(testDir, "cli.js");
+const windowsRunnerPath = resolve(testDir, "windows-runner.js");
 const hasBwrap = spawnSync("which", ["bwrap"]).status === 0;
 
 test("write grant materialization mode follows backend ownership", () => {
@@ -286,6 +287,7 @@ test("package exposes the raxcell executable", () => {
   };
   assert.deepEqual(packageJson.bin, {
     raxcell: "./dist/cli.js",
+    "raxcell-windows-runner": "./dist/windows-runner.js",
   });
 });
 
@@ -293,10 +295,262 @@ test("package exposes colleague smoke scripts for native backends", () => {
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
     scripts?: Record<string, string>;
   };
+  assert.equal(packageJson.scripts?.build, "tsc -p tsconfig.json && node scripts/mark-cli-executable.mjs");
   assert.equal(packageJson.scripts?.["smoke:macos"], "node scripts/smoke-macos-seatbelt.mjs");
   assert.equal(packageJson.scripts?.["smoke:windows"], "node scripts/smoke-windows-native.mjs");
+  assert.equal(existsSync(resolve(testDir, "../scripts/mark-cli-executable.mjs")), true);
+  assert.equal(existsSync(windowsRunnerPath), true);
   assert.equal(existsSync(resolve(testDir, "../scripts/smoke-macos-seatbelt.mjs")), true);
   assert.equal(existsSync(resolve(testDir, "../scripts/smoke-windows-native.mjs")), true);
+});
+
+test("windows runner probes the configured Codex sandbox engine", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "raxcell-windows-runner-probe-"));
+  const fakeCodex = join(tempDir, "codex.js");
+  writeFileSync(
+    fakeCodex,
+    `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex 1.2.3");
+  process.exit(0);
+}
+process.exit(8);
+`,
+  );
+  chmodSync(fakeCodex, 0o755);
+
+  try {
+    const result = spawnSync(process.execPath, [windowsRunnerPath, "probe"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RAXCELL_CODEX_BIN: fakeCodex,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as {
+      kind: string;
+      ready: boolean;
+      codexPath: string | null;
+      missing: string[];
+    };
+    assert.deepEqual(response, {
+      kind: "raxcell.windowsRunner.probeResult.v1",
+      ready: true,
+      codexPath: fakeCodex,
+      missing: [],
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("windows runner lowers Raxcell request to Codex sandbox profile", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "raxcell-windows-runner-run-"));
+  const fakeCodex = join(tempDir, "codex.js");
+  const observedPath = join(tempDir, "observed.json");
+  writeFileSync(
+    fakeCodex,
+    `#!/usr/bin/env node
+const { readFileSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const observed = {
+  argv: process.argv.slice(2),
+  codexHome: process.env.CODEX_HOME,
+  config: readFileSync(join(process.env.CODEX_HOME, "config.toml"), "utf8"),
+  stdin: readFileSync(0, "utf8")
+};
+writeFileSync(${JSON.stringify(observedPath)}, JSON.stringify(observed));
+process.stdout.write(JSON.stringify(observed));
+process.stderr.write("codex-stderr");
+process.exit(7);
+`,
+  );
+  chmodSync(fakeCodex, 0o755);
+
+  const request: WindowsRunnerRunRequest = {
+    kind: "raxcell.windowsRunner.run.v1",
+    backend: "windows-native",
+    command: {
+      argv: ["cmd.exe", "/d", "/s", "/c", "type hello.txt"],
+      cwd: "C:\\workspace",
+      env: { RAXCELL_ALLOWED: "yes" },
+      stdin: "runner-stdin",
+    },
+    normalizedCwd: "C:\\workspace",
+    commandEnvMode: "clean",
+    writeGrantMaterialization: "runner-owned",
+    enforcement: {
+      profile: "windows-smoke",
+      filesystem: {
+        read: ["C:\\workspace"],
+        write: ["C:\\workspace"],
+      },
+      network: "deny",
+      process: {},
+      resources: { timeoutMs: 1000 },
+    },
+    action: {
+      actionId: "windows-runner-test",
+      ownerRuntime: "test",
+      intentLabel: "windows-runner",
+      metadata: {},
+    },
+    filesystemLowering: {
+      declaredRoots: [
+        { path: "C:\\workspace", access: "write", source: "declared" },
+        { path: "D:\\readonly", access: "read", source: "policy-grant" },
+      ],
+      runtimeRoots: [],
+      policyGrants: [{ reason: "test", path: "D:\\readonly", access: ["read"], grantedBy: "test" }],
+      warnings: [],
+    },
+    tokenMode: "writable-roots-capability",
+    aclRoots: [
+      { path: "C:\\workspace", access: "write", source: "declared" },
+      { path: "D:\\readonly", access: "read", source: "policy-grant" },
+    ],
+    networkBlocked: true,
+    networkMode: "deny",
+    timeoutMs: 1000,
+  };
+
+  try {
+    const result = spawnSync(process.execPath, [windowsRunnerPath, "run"], {
+      encoding: "utf8",
+      input: JSON.stringify(request),
+      env: {
+        ...process.env,
+        RAXCELL_CODEX_BIN: fakeCodex,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as RunResponse;
+    const observed = JSON.parse(readFileSync(observedPath, "utf8")) as {
+      argv: string[];
+      codexHome: string;
+      config: string;
+      stdin: string;
+    };
+
+    assert.equal(response.kind, "raxcell.runResult.v1");
+    assert.equal(response.ok, true);
+    assert.equal(response.backend, "windows-native");
+    assert.equal(response.exitCode, 7);
+    assert.equal(response.stderr, "codex-stderr");
+    assert.deepEqual(observed.argv, [
+      "sandbox",
+      "--permissions-profile",
+      "raxcell-runtime",
+      "--include-managed-config",
+      "-C",
+      "C:\\workspace",
+      "--",
+      "cmd.exe",
+      "/d",
+      "/s",
+      "/c",
+      "type hello.txt",
+    ]);
+    assert.equal(observed.stdin, "runner-stdin");
+    assert.match(observed.config, /default_permissions = "raxcell-runtime"/);
+    assert.match(observed.config, /\[permissions\.raxcell-runtime\.filesystem\]/);
+    assert.match(observed.config, /"C:\\\\workspace" = "write"/);
+    assert.match(observed.config, /"D:\\\\readonly" = "read"/);
+    assert.match(observed.config, /\[permissions\.raxcell-runtime\.network\]\nenabled = false/);
+    assert.ok(response.stdout.includes('"argv"'));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("windows runner reports backend timeout without treating it as command exit", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "raxcell-windows-runner-timeout-"));
+  const fakeCodex = join(tempDir, "codex.js");
+  writeFileSync(
+    fakeCodex,
+    `#!/usr/bin/env node
+setTimeout(() => {}, 10000);
+`,
+  );
+  chmodSync(fakeCodex, 0o755);
+
+  const request: WindowsRunnerRunRequest = {
+    kind: "raxcell.windowsRunner.run.v1",
+    backend: "windows-native",
+    command: {
+      argv: ["cmd.exe", "/d", "/s", "/c", "echo hello"],
+      cwd: "C:\\workspace",
+      env: {},
+      stdin: null,
+    },
+    normalizedCwd: "C:\\workspace",
+    commandEnvMode: "clean",
+    writeGrantMaterialization: "runner-owned",
+    enforcement: {
+      profile: "windows-timeout",
+      filesystem: {
+        read: ["C:\\workspace"],
+        write: ["C:\\workspace"],
+      },
+      network: "deny",
+      process: {},
+      resources: { timeoutMs: 50 },
+    },
+    action: {
+      actionId: "windows-runner-timeout",
+      ownerRuntime: "test",
+      intentLabel: "windows-runner-timeout",
+      metadata: {},
+    },
+    filesystemLowering: {
+      declaredRoots: [{ path: "C:\\workspace", access: "write", source: "declared" }],
+      runtimeRoots: [],
+      policyGrants: [],
+      warnings: [],
+    },
+    tokenMode: "writable-roots-capability",
+    aclRoots: [{ path: "C:\\workspace", access: "write", source: "declared" }],
+    networkBlocked: true,
+    networkMode: "deny",
+    timeoutMs: 50,
+  };
+
+  try {
+    const result = spawnSync(process.execPath, [windowsRunnerPath, "run"], {
+      encoding: "utf8",
+      input: JSON.stringify(request),
+      env: {
+        ...process.env,
+        RAXCELL_CODEX_BIN: fakeCodex,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as RunResponse;
+
+    assert.deepEqual(response, {
+      kind: "raxcell.runResult.v1",
+      ok: false,
+      backend: "windows-native",
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      timedOut: true,
+      denial: {
+        code: "RUNNER_TIMED_OUT",
+        message: "Windows native runner timed out.",
+        publicSafe: true,
+      },
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering: request.filesystemLowering,
+      backendArtifacts: null,
+      fallback: null,
+      capabilityReport: null,
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("colleague smoke scripts emit protocol JSON summaries on this host", () => {
@@ -571,6 +825,102 @@ test("run keeps ok true when sandbox executes a nonzero command", () => {
     assert.equal(response.exitCode, 7);
     assert.match(response.stderr, /command-failed/);
     assert.equal(response.denial, null);
+    assert.equal(response.environmentGap, null);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test("run reports bubblewrap startup failure as backend failure", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-bwrap-failure-"));
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nprintf 'bwrap: mount failed\\n' >&2\nexit 1\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    command: {
+      argv: ["/bin/sh", "-lc", "printf never-runs"],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as RunResponse;
+    assert.equal(response.ok, false);
+    assert.equal(response.exitCode, 1);
+    assert.equal(response.timedOut, false);
+    assert.equal(response.denial?.code, "BACKEND_EXECUTION_FAILED");
+    assert.match(response.stderr, /^bwrap: mount failed/);
+    assert.equal(response.policyDecision, null);
+    assert.equal(response.environmentGap, null);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test("run reports parent-enforced timeout as backend failure", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "raxcell-timeout-"));
+  const fakeBinDir = mkdtempSync(join(tmpdir(), "raxcell-fake-bin-"));
+  const fakeBwrap = join(fakeBinDir, "bwrap");
+  writeFileSync(fakeBwrap, "#!/bin/sh\nexec sleep 10\n");
+  chmodSync(fakeBwrap, 0o755);
+  const request: RunRequest = {
+    ...sampleRunRequest(),
+    command: {
+      argv: ["/bin/sh", "-lc", "sleep 10"],
+      cwd: workspace,
+      env: {},
+      stdin: null,
+    },
+    enforcement: {
+      ...sampleRunRequest().enforcement,
+      filesystem: {
+        read: [workspace],
+        write: [workspace],
+      },
+      resources: {
+        timeoutMs: 50,
+      },
+    },
+  };
+
+  try {
+    const result = spawnSync(cliPath, ["run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      },
+      input: JSON.stringify(request),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout) as RunResponse;
+    assert.equal(response.ok, false);
+    assert.equal(response.exitCode, null);
+    assert.equal(response.timedOut, true);
+    assert.equal(response.denial?.code, "RUNNER_TIMED_OUT");
+    assert.equal(response.policyDecision, null);
     assert.equal(response.environmentGap, null);
   } finally {
     rmSync(workspace, { recursive: true, force: true });

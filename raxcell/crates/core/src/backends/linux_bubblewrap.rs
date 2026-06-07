@@ -1,7 +1,16 @@
+use raxcell_codex_protocol::{
+    AdditionalPermissionProfile, FileSystemAccessMode, FileSystemPath, FileSystemPermissions,
+    FileSystemSandboxEntry, FileSystemSandboxPolicy, FileSystemSpecialPath, NetworkSandboxPolicy,
+    PermissionProfile,
+};
+use raxcell_codex_sandboxing::{
+    SandboxCommand, SandboxError, SandboxManager, SandboxTransformRequest, SandboxType,
+    TransformedSandboxCommand,
+};
 use raxcell_protocol::{
     BackendFamily, BackendLoweringArtifact, Denial, DenialCode, FileSystemLoweringReport,
-    LoweredRoot, LoweredRootAccess, LoweredRootSource, PolicyDecisionRequired, PrepareRunResponse,
-    ProbeResponse, RunRequest, RunResponse,
+    LoweredRoot, LoweredRootAccess, LoweredRootSource, PolicyDecisionRequired, PolicyGrant,
+    PrepareRunResponse, ProbeResponse, RunRequest, RunResponse,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -10,6 +19,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use wait_timeout::ChildExt;
+
+const CODEX_LINUX_SANDBOX_ARG0: &str = "codex-linux-sandbox";
+const RAXCELL_CODEX_LINUX_SANDBOX_BIN: &str = "raxcell-codex-linux-sandbox";
 
 struct ExecutionOutput {
     output: std::process::Output,
@@ -20,6 +32,11 @@ struct ExecutionOutput {
 struct PrepareOutput {
     filesystem_lowering: FileSystemLoweringReport,
     backend_artifacts: Vec<BackendLoweringArtifact>,
+}
+
+pub(super) struct CodexLinuxSandboxTransform {
+    pub(super) command: TransformedSandboxCommand,
+    pub(super) filesystem_lowering: FileSystemLoweringReport,
 }
 
 #[derive(Debug)]
@@ -37,12 +54,20 @@ pub fn run(request: RunRequest, capability_report: ProbeResponse) -> RunResponse
             "linux-bubblewrap can only run on Linux hosts".to_string(),
         );
     }
-    let Ok(bwrap_path) = which::which("bwrap") else {
+    let Ok(helper_path) = codex_linux_sandbox_path() else {
         return fail(
             request,
             capability_report,
             DenialCode::BackendUnavailable,
-            "linux-bubblewrap requires the `bwrap` binary".to_string(),
+            "linux-bubblewrap requires the `codex-linux-sandbox` helper".to_string(),
+        );
+    };
+    let Ok(_) = which::which("bwrap") else {
+        return fail(
+            request,
+            capability_report,
+            DenialCode::BackendUnavailable,
+            "codex-linux-sandbox requires the `bwrap` binary".to_string(),
         );
     };
     if !capability_report.ready {
@@ -54,18 +79,75 @@ pub fn run(request: RunRequest, capability_report: ProbeResponse) -> RunResponse
         );
     }
 
-    match run_inner(&request, &bwrap_path) {
-        Ok(execution) => RunResponse {
-            kind: "raxcell.runResult.v1".to_string(),
-            ok: execution.output.status.success() && !execution.timed_out,
+    run_with_helper_path(request, capability_report, &helper_path)
+}
+
+#[cfg(test)]
+pub(super) fn run_with_helper_path_for_test(
+    request: RunRequest,
+    capability_report: ProbeResponse,
+    helper_path: &Path,
+) -> RunResponse {
+    run_with_helper_path(request, capability_report, helper_path)
+}
+
+#[cfg(test)]
+pub(super) fn prepare_run_with_helper_path_for_test(
+    request: RunRequest,
+    capability_report: ProbeResponse,
+    helper_path: &Path,
+) -> PrepareRunResponse {
+    if let Err(LinuxRunError::SandboxDenied(message)) =
+        validate_codex_linux_sandbox_helper(helper_path)
+    {
+        return fail_prepare(
+            request,
+            capability_report,
+            DenialCode::SandboxDenied,
+            message,
+        );
+    }
+    match prepare_inner(&request, helper_path) {
+        Ok(prepared) => PrepareRunResponse {
+            kind: "raxcell.prepareRunResult.v1".to_string(),
+            ok: true,
             backend: Some(BackendFamily::LinuxBubblewrap),
-            exit_code: execution.output.status.code(),
-            stdout: String::from_utf8_lossy(&execution.output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&execution.output.stderr).into_owned(),
-            timed_out: execution.timed_out,
-            denial: if execution.output.status.success() && !execution.timed_out {
-                None
-            } else if execution.timed_out {
+            denial: None,
+            policy_decision: None,
+            filesystem_lowering: Some(prepared.filesystem_lowering),
+            backend_artifacts: prepared.backend_artifacts,
+            capability_report: Some(capability_report),
+        },
+        Err(LinuxRunError::SandboxDenied(message)) => fail_prepare(
+            request,
+            capability_report,
+            DenialCode::SandboxDenied,
+            message,
+        ),
+        Err(LinuxRunError::PolicyDecisionRequired(decision)) => {
+            fail_prepare_policy_decision_required(request, capability_report, decision)
+        }
+    }
+}
+
+fn run_with_helper_path(
+    request: RunRequest,
+    capability_report: ProbeResponse,
+    helper_path: &Path,
+) -> RunResponse {
+    if let Err(LinuxRunError::SandboxDenied(message)) =
+        validate_codex_linux_sandbox_helper(helper_path)
+    {
+        return fail(
+            request,
+            capability_report,
+            DenialCode::SandboxDenied,
+            message,
+        );
+    }
+    match run_inner(&request, helper_path) {
+        Ok(execution) => {
+            let denial = if execution.timed_out {
                 Some(Denial {
                     code: DenialCode::Timeout,
                     message: format!(
@@ -75,20 +157,23 @@ pub fn run(request: RunRequest, capability_report: ProbeResponse) -> RunResponse
                     public_safe: true,
                 })
             } else {
-                Some(Denial {
-                    code: DenialCode::ExecutionFailed,
-                    message: format!(
-                        "sandboxed command exited unsuccessfully; actionId={}",
-                        request.action.action_id
-                    ),
-                    public_safe: true,
-                })
-            },
-            policy_decision: None,
-            filesystem_lowering: Some(execution.filesystem_lowering),
-            fallback: None,
-            capability_report: Some(capability_report),
-        },
+                None
+            };
+            RunResponse {
+                kind: "raxcell.runResult.v1".to_string(),
+                ok: !execution.timed_out,
+                backend: Some(BackendFamily::LinuxBubblewrap),
+                exit_code: execution.output.status.code(),
+                stdout: String::from_utf8_lossy(&execution.output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&execution.output.stderr).into_owned(),
+                timed_out: execution.timed_out,
+                denial,
+                policy_decision: None,
+                filesystem_lowering: Some(execution.filesystem_lowering),
+                fallback: None,
+                capability_report: Some(capability_report),
+            }
+        }
         Err(LinuxRunError::SandboxDenied(message)) => fail(
             request,
             capability_report,
@@ -110,12 +195,20 @@ pub fn prepare_run(request: RunRequest, capability_report: ProbeResponse) -> Pre
             "linux-bubblewrap can only prepare on Linux hosts".to_string(),
         );
     }
-    let Ok(bwrap_path) = which::which("bwrap") else {
+    let Ok(helper_path) = codex_linux_sandbox_path() else {
         return fail_prepare(
             request,
             capability_report,
             DenialCode::BackendUnavailable,
-            "linux-bubblewrap prepare requires the `bwrap` binary".to_string(),
+            "linux-bubblewrap prepare requires the `codex-linux-sandbox` helper".to_string(),
+        );
+    };
+    let Ok(_) = which::which("bwrap") else {
+        return fail_prepare(
+            request,
+            capability_report,
+            DenialCode::BackendUnavailable,
+            "codex-linux-sandbox prepare requires the `bwrap` binary".to_string(),
         );
     };
     if !capability_report.ready {
@@ -126,8 +219,18 @@ pub fn prepare_run(request: RunRequest, capability_report: ProbeResponse) -> Pre
             "linux-bubblewrap capability probe is not ready".to_string(),
         );
     }
+    if let Err(LinuxRunError::SandboxDenied(message)) =
+        validate_codex_linux_sandbox_helper(&helper_path)
+    {
+        return fail_prepare(
+            request,
+            capability_report,
+            DenialCode::SandboxDenied,
+            message,
+        );
+    }
 
-    match prepare_inner(&request, &bwrap_path) {
+    match prepare_inner(&request, &helper_path) {
         Ok(prepared) => PrepareRunResponse {
             kind: "raxcell.prepareRunResult.v1".to_string(),
             ok: true,
@@ -154,9 +257,9 @@ pub(crate) fn explain_runtime_roots() -> Vec<LoweredRoot> {
     runtime_roots_report(&[])
 }
 
-fn run_inner(request: &RunRequest, bwrap_path: &Path) -> Result<ExecutionOutput, LinuxRunError> {
+fn run_inner(request: &RunRequest, helper_path: &Path) -> Result<ExecutionOutput, LinuxRunError> {
     let argv = &request.command.argv;
-    let Some(program) = argv.first() else {
+    if argv.first().is_none() {
         return Err(sandbox_denied(
             "command argv must contain at least one item",
         ));
@@ -164,19 +267,17 @@ fn run_inner(request: &RunRequest, bwrap_path: &Path) -> Result<ExecutionOutput,
 
     let cwd = std::fs::canonicalize(&request.command.cwd)
         .map_err(|err| sandbox_denied(format!("failed to resolve command cwd: {err}")))?;
-    let (args, filesystem_lowering) = build_bwrap_args(request, &cwd)?;
-    let mut command = Command::new(bwrap_path);
-    command.args(args);
-    command.arg(program);
-    command.args(argv.iter().skip(1));
-    command.current_dir(&cwd);
+    let transformed = codex_linux_sandbox_transform(request, helper_path, &cwd)?;
+    let mut command = transformed_sandbox_command(&transformed.command);
+    command.args(&transformed.command.args);
+    command.current_dir(&transformed.command.cwd);
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
     command.env_clear();
     if request.command.stdin.is_some() {
         command.stdin(Stdio::piped());
     }
-    for (key, value) in &request.command.env {
+    for (key, value) in &transformed.command.env {
         command.env(key, value);
     }
 
@@ -202,7 +303,7 @@ fn run_inner(request: &RunRequest, bwrap_path: &Path) -> Result<ExecutionOutput,
                     .map(|output| ExecutionOutput {
                         output,
                         timed_out: false,
-                        filesystem_lowering,
+                        filesystem_lowering: transformed.filesystem_lowering,
                     })
                     .map_err(|err| {
                         sandbox_denied(format!("failed to collect sandboxed command output: {err}"))
@@ -217,7 +318,7 @@ fn run_inner(request: &RunRequest, bwrap_path: &Path) -> Result<ExecutionOutput,
                     .map(|output| ExecutionOutput {
                         output,
                         timed_out: true,
-                        filesystem_lowering,
+                        filesystem_lowering: transformed.filesystem_lowering,
                     })
                     .map_err(|err| {
                         sandbox_denied(format!(
@@ -232,39 +333,577 @@ fn run_inner(request: &RunRequest, bwrap_path: &Path) -> Result<ExecutionOutput,
         .map(|output| ExecutionOutput {
             output,
             timed_out: false,
-            filesystem_lowering,
+            filesystem_lowering: transformed.filesystem_lowering,
         })
         .map_err(|err| sandbox_denied(format!("failed to wait for sandboxed command: {err}")))
 }
 
-fn prepare_inner(request: &RunRequest, bwrap_path: &Path) -> Result<PrepareOutput, LinuxRunError> {
+fn prepare_inner(request: &RunRequest, helper_path: &Path) -> Result<PrepareOutput, LinuxRunError> {
     let cwd = std::fs::canonicalize(&request.command.cwd)
         .map_err(|err| sandbox_denied(format!("failed to resolve command cwd: {err}")))?;
-    let (args, filesystem_lowering) = build_bwrap_args(request, &cwd)?;
+    let transformed = codex_linux_sandbox_transform(request, helper_path, &cwd)?;
     Ok(PrepareOutput {
-        filesystem_lowering,
-        backend_artifacts: vec![bubblewrap_artifact(bwrap_path, args)],
+        filesystem_lowering: transformed.filesystem_lowering,
+        backend_artifacts: vec![codex_linux_sandbox_artifact(&transformed.command)],
     })
 }
 
-fn bubblewrap_artifact(bwrap_path: &Path, args: Vec<OsString>) -> BackendLoweringArtifact {
+fn codex_linux_sandbox_artifact(command: &TransformedSandboxCommand) -> BackendLoweringArtifact {
     let mut data = BTreeMap::new();
     data.insert(
         "executable".to_string(),
-        serde_json::json!(bwrap_path.to_string_lossy()),
+        serde_json::json!(command.program.to_string_lossy()),
+    );
+    data.insert(
+        "engine".to_string(),
+        serde_json::json!("codex-linux-sandbox"),
     );
     BackendLoweringArtifact {
         backend: BackendFamily::LinuxBubblewrap,
-        format: "linux-bubblewrap-argv".to_string(),
-        arguments: args
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect(),
+        format: "codex-linux-sandbox-argv".to_string(),
+        arguments: command.args.clone(),
         data,
         warnings: Vec::new(),
     }
 }
 
+fn validate_codex_linux_sandbox_helper(helper_path: &Path) -> Result<(), LinuxRunError> {
+    let output = codex_linux_sandbox_command(helper_path)
+        .arg("--help")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_clear()
+        .output()
+        .map_err(|err| {
+            sandbox_denied(format!(
+                "failed to run codex-linux-sandbox helper preflight: {err}"
+            ))
+        })?;
+    if output.status.success() {
+        let help_text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if !help_text.contains(CODEX_LINUX_SANDBOX_ARG0)
+            || !help_text.contains("--sandbox-policy-cwd")
+        {
+            return Err(sandbox_denied(
+                "codex-linux-sandbox helper preflight help output does not match expected helper shape",
+            ));
+        }
+        return validate_codex_linux_sandbox_hidden_args(helper_path);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let message = stderr.trim();
+    Err(sandbox_denied(format!(
+        "codex-linux-sandbox helper preflight failed with exit code {:?}: {}",
+        output.status.code(),
+        if message.is_empty() {
+            "no stderr"
+        } else {
+            message
+        }
+    )))
+}
+
+fn validate_codex_linux_sandbox_hidden_args(helper_path: &Path) -> Result<(), LinuxRunError> {
+    let output = codex_linux_sandbox_command(helper_path)
+        .args([
+            "--sandbox-policy-cwd",
+            ".",
+            "--command-cwd",
+            ".",
+            "--permission-profile",
+            "{not-json",
+            "--",
+            "/bin/true",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .env_clear()
+        .output()
+        .map_err(|err| {
+            sandbox_denied(format!(
+                "failed to run codex-linux-sandbox hidden-argument preflight: {err}"
+            ))
+        })?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success()
+        && stderr.contains("--permission-profile")
+        && stderr.contains("invalid permission profile JSON")
+    {
+        return Ok(());
+    }
+    Err(sandbox_denied(format!(
+        "codex-linux-sandbox helper preflight did not validate hidden sandbox arguments: {}",
+        if stderr.trim().is_empty() {
+            "no stderr"
+        } else {
+            stderr.trim()
+        }
+    )))
+}
+
+fn codex_linux_sandbox_command(helper_path: &Path) -> Command {
+    let mut command = Command::new(helper_path);
+    apply_codex_linux_sandbox_arg0(&mut command, helper_path);
+    command
+}
+
+fn transformed_sandbox_command(transformed: &TransformedSandboxCommand) -> Command {
+    let mut command = Command::new(&transformed.program);
+    apply_transformed_arg0(&mut command, transformed.arg0_override.as_deref());
+    command
+}
+
+#[cfg(unix)]
+fn apply_codex_linux_sandbox_arg0(command: &mut Command, helper_path: &Path) {
+    let arg0 = if helper_path.file_name().and_then(|name| name.to_str())
+        == Some(CODEX_LINUX_SANDBOX_ARG0)
+    {
+        helper_path.to_string_lossy().into_owned()
+    } else {
+        CODEX_LINUX_SANDBOX_ARG0.to_string()
+    };
+    apply_transformed_arg0(command, Some(&arg0));
+}
+
+#[cfg(not(unix))]
+fn apply_codex_linux_sandbox_arg0(_command: &mut Command, _helper_path: &Path) {}
+
+#[cfg(unix)]
+fn apply_transformed_arg0(command: &mut Command, arg0_override: Option<&str>) {
+    use std::os::unix::process::CommandExt;
+
+    if let Some(arg0) = arg0_override {
+        command.arg0(arg0);
+    }
+}
+
+#[cfg(not(unix))]
+fn apply_transformed_arg0(_command: &mut Command, _arg0_override: Option<&str>) {}
+
+fn codex_linux_sandbox_transform(
+    request: &RunRequest,
+    helper_path: &Path,
+    cwd: &Path,
+) -> Result<CodexLinuxSandboxTransform, LinuxRunError> {
+    let filesystem_lowering = filesystem_lowering_report(request, cwd)?;
+    require_shell_effect_grants(request, cwd, &filesystem_lowering)?;
+    let permission_profile = codex_permission_profile(request, helper_path, &filesystem_lowering)?;
+    let additional_permissions = codex_additional_permissions(request)?;
+    let mut env = request.command.env.clone();
+    env.entry("PATH".to_string())
+        .or_insert_with(|| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+    let program = request
+        .command
+        .argv
+        .first()
+        .ok_or_else(|| sandbox_denied("command argv must contain at least one item"))?;
+    let command = SandboxCommand {
+        program: PathBuf::from(program),
+        args: request.command.argv.iter().skip(1).cloned().collect(),
+        cwd: cwd.to_path_buf(),
+        env,
+        additional_permissions,
+    };
+    let command = SandboxManager::new()
+        .transform(SandboxTransformRequest {
+            command,
+            permission_profile,
+            sandbox_type: SandboxType::LinuxSeccomp,
+            sandbox_policy_cwd: cwd.to_path_buf(),
+            codex_linux_sandbox_exe: Some(helper_path.to_path_buf()),
+            use_legacy_landlock: false,
+            allow_network_for_proxy: false,
+        })
+        .map_err(sandbox_transform_denied)?;
+    Ok(CodexLinuxSandboxTransform {
+        command,
+        filesystem_lowering,
+    })
+}
+
+#[cfg(test)]
+pub(super) fn codex_linux_sandbox_transform_for_test(
+    request: &RunRequest,
+    helper_path: &Path,
+    cwd: &Path,
+) -> Result<CodexLinuxSandboxTransform, LinuxRunError> {
+    codex_linux_sandbox_transform(request, helper_path, cwd)
+}
+
+fn codex_permission_profile(
+    request: &RunRequest,
+    helper_path: &Path,
+    filesystem_lowering: &FileSystemLoweringReport,
+) -> Result<PermissionProfile, LinuxRunError> {
+    let mut entries = vec![FileSystemSandboxEntry {
+        path: FileSystemPath::Special {
+            value: FileSystemSpecialPath::Minimal,
+        },
+        access: FileSystemAccessMode::Read,
+    }];
+    let helper_path =
+        std::fs::canonicalize(helper_path).unwrap_or_else(|_| helper_path.to_path_buf());
+    entries.push(FileSystemSandboxEntry {
+        path: FileSystemPath::Path { path: helper_path },
+        access: FileSystemAccessMode::Read,
+    });
+    for root in &filesystem_lowering.declared_roots {
+        if root.source == LoweredRootSource::PolicyGrant {
+            continue;
+        }
+        if let Some(entry) = codex_file_system_entry(root) {
+            entries.push(entry);
+        }
+    }
+    Ok(PermissionProfile::from_runtime_permissions(
+        &FileSystemSandboxPolicy::restricted(entries),
+        codex_network_policy(request),
+    ))
+}
+
+fn codex_additional_permissions(
+    request: &RunRequest,
+) -> Result<Vec<AdditionalPermissionProfile>, LinuxRunError> {
+    let entries: Vec<FileSystemSandboxEntry> = request
+        .policy_grants
+        .iter()
+        .map(codex_policy_grant_entry)
+        .collect::<Result<_, _>>()?;
+    if entries.is_empty() {
+        Ok(Vec::new())
+    } else {
+        Ok(vec![AdditionalPermissionProfile {
+            network: None,
+            file_system: Some(FileSystemPermissions {
+                entries,
+                glob_scan_max_depth: None,
+            }),
+        }])
+    }
+}
+
+fn codex_policy_grant_entry(grant: &PolicyGrant) -> Result<FileSystemSandboxEntry, LinuxRunError> {
+    let path = std::fs::canonicalize(&grant.path).map_err(|err| {
+        sandbox_denied(format!(
+            "policy grant path `{}` is not available: {err}",
+            grant.path
+        ))
+    })?;
+    let access = if grant.access.iter().any(|access| access == "write") {
+        FileSystemAccessMode::Write
+    } else {
+        FileSystemAccessMode::Read
+    };
+    Ok(FileSystemSandboxEntry {
+        path: FileSystemPath::Path { path },
+        access,
+    })
+}
+
+fn codex_file_system_entry(root: &LoweredRoot) -> Option<FileSystemSandboxEntry> {
+    let access = match root.access {
+        LoweredRootAccess::Read => FileSystemAccessMode::Read,
+        LoweredRootAccess::Write => FileSystemAccessMode::Write,
+        LoweredRootAccess::Runtime
+        | LoweredRootAccess::Scratch
+        | LoweredRootAccess::RuntimeLink => return None,
+    };
+    Some(FileSystemSandboxEntry {
+        path: FileSystemPath::Path {
+            path: PathBuf::from(&root.path),
+        },
+        access,
+    })
+}
+
+fn codex_network_policy(request: &RunRequest) -> NetworkSandboxPolicy {
+    if request.enforcement.network.as_deref() == Some("allow") {
+        NetworkSandboxPolicy::Enabled
+    } else {
+        NetworkSandboxPolicy::Restricted
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShellEffectAccess {
+    Read,
+    Write,
+}
+
+struct ShellEffect {
+    path: PathBuf,
+    access: ShellEffectAccess,
+}
+
+fn require_shell_effect_grants(
+    request: &RunRequest,
+    cwd: &Path,
+    filesystem_lowering: &FileSystemLoweringReport,
+) -> Result<(), LinuxRunError> {
+    for effect in shell_effects(&request.command.argv, cwd)? {
+        if shell_effect_is_allowed(&effect, request, filesystem_lowering)? {
+            continue;
+        }
+        let required = match effect.access {
+            ShellEffectAccess::Read => "filesystem.read",
+            ShellEffectAccess::Write => "filesystem.write",
+        };
+        return Err(LinuxRunError::PolicyDecisionRequired(
+            PolicyDecisionRequired {
+                reason: "shell-effect-outside-declared-roots".to_string(),
+                path: effect.path.to_string_lossy().into_owned(),
+                required: vec![required.to_string()],
+                public_safe_message:
+                    "command references filesystem paths outside declared roots; upper policy decision required"
+                        .to_string(),
+            },
+        ));
+    }
+    Ok(())
+}
+
+fn shell_effect_is_allowed(
+    effect: &ShellEffect,
+    request: &RunRequest,
+    filesystem_lowering: &FileSystemLoweringReport,
+) -> Result<bool, LinuxRunError> {
+    let read_roots: Vec<PathBuf> = filesystem_lowering
+        .declared_roots
+        .iter()
+        .filter(|root| root.access == LoweredRootAccess::Read)
+        .map(|root| PathBuf::from(&root.path))
+        .collect();
+    let write_roots: Vec<PathBuf> = filesystem_lowering
+        .declared_roots
+        .iter()
+        .filter(|root| root.access == LoweredRootAccess::Write)
+        .map(|root| PathBuf::from(&root.path))
+        .collect();
+    if is_covered(&effect.path, &write_roots) {
+        return Ok(true);
+    }
+    if effect.access == ShellEffectAccess::Read && is_covered(&effect.path, &read_roots) {
+        return Ok(true);
+    }
+    for grant in &request.policy_grants {
+        let grant_path = std::fs::canonicalize(&grant.path).map_err(|err| {
+            sandbox_denied(format!(
+                "policy grant path `{}` is not available: {err}",
+                grant.path
+            ))
+        })?;
+        if !effect.path.starts_with(&grant_path) {
+            continue;
+        }
+        if grant.access.iter().any(|access| access == "write") {
+            return Ok(true);
+        }
+        if effect.access == ShellEffectAccess::Read
+            && grant.access.iter().any(|access| access == "read")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn shell_effects(argv: &[String], cwd: &Path) -> Result<Vec<ShellEffect>, LinuxRunError> {
+    let Some(script) = shell_script_from_argv(argv) else {
+        return command_effects(argv, cwd);
+    };
+    command_effects(&tokenize_shell_script(script), cwd)
+}
+
+fn shell_script_from_argv(argv: &[String]) -> Option<&str> {
+    let executable = Path::new(argv.first()?).file_name()?.to_str()?;
+    if !matches!(executable, "sh" | "bash" | "dash" | "zsh") {
+        return None;
+    }
+    argv.iter()
+        .enumerate()
+        .find(|(index, arg)| *index > 0 && matches!(arg.as_str(), "-c" | "-lc" | "-cl"))
+        .and_then(|(index, _)| argv.get(index + 1).map(String::as_str))
+}
+
+fn tokenize_shell_script(script: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = script.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            ' ' | '\t' | '\n' => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            '>' | '<' => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+                let mut op = ch.to_string();
+                if chars.peek() == Some(&ch) {
+                    op.push(chars.next().expect("peeked char exists"));
+                }
+                tokens.push(op);
+            }
+            ';' | '|' | '&' => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+                tokens.push(ch.to_string());
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    split_numbered_redirects(tokens)
+}
+
+fn split_numbered_redirects(tokens: Vec<String>) -> Vec<String> {
+    let mut split = Vec::new();
+    for token in tokens {
+        if token.len() > 1
+            && token.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+            && token[1..].chars().all(|ch| ch == '>' || ch == '<')
+        {
+            split.push(token[1..].to_string());
+        } else {
+            split.push(token);
+        }
+    }
+    split
+}
+
+fn command_effects(argv: &[String], cwd: &Path) -> Result<Vec<ShellEffect>, LinuxRunError> {
+    let mut effects = Vec::new();
+    let mut index = 0;
+    while index < argv.len() {
+        let token = &argv[index];
+        if matches!(token.as_str(), ";" | "|" | "&") {
+            index += 1;
+            continue;
+        }
+        if let Some(access) = redirect_access(token) {
+            if let Some(target) = argv.get(index + 1) {
+                effects.push(ShellEffect {
+                    path: normalize_effect_path(target, cwd)?,
+                    access,
+                });
+            }
+            index += 2;
+            continue;
+        }
+        let command = Path::new(token)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(token);
+        if command == "cat" {
+            for arg in non_option_args(&argv[index + 1..]) {
+                effects.push(ShellEffect {
+                    path: normalize_effect_path(arg, cwd)?,
+                    access: ShellEffectAccess::Read,
+                });
+            }
+        } else if matches!(command, "touch" | "mkdir" | "rm" | "rmdir") {
+            for arg in non_option_args(&argv[index + 1..]) {
+                effects.push(ShellEffect {
+                    path: normalize_effect_path(arg, cwd)?,
+                    access: ShellEffectAccess::Write,
+                });
+            }
+        }
+        index += 1;
+    }
+    Ok(effects)
+}
+
+fn redirect_access(token: &str) -> Option<ShellEffectAccess> {
+    match token {
+        ">" | ">>" | "<>" => Some(ShellEffectAccess::Write),
+        "<" | "<<" => Some(ShellEffectAccess::Read),
+        _ => None,
+    }
+}
+
+fn non_option_args(args: &[String]) -> impl Iterator<Item = &String> {
+    args.iter()
+        .take_while(|arg| !matches!(arg.as_str(), ";" | "|" | "&"))
+        .filter(|arg| !arg.starts_with('-'))
+}
+
+fn normalize_effect_path(raw: &str, cwd: &Path) -> Result<PathBuf, LinuxRunError> {
+    let path = if Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        cwd.join(raw)
+    };
+    if let Ok(canonical) = std::fs::canonicalize(&path) {
+        return Ok(canonical);
+    }
+    let Some(parent) = path.parent() else {
+        return Err(sandbox_denied(format!(
+            "failed to resolve shell effect path `{raw}`"
+        )));
+    };
+    let parent = std::fs::canonicalize(parent).map_err(|err| {
+        sandbox_denied(format!(
+            "failed to resolve shell effect parent `{}`: {err}",
+            parent.to_string_lossy()
+        ))
+    })?;
+    let Some(file_name) = path.file_name() else {
+        return Ok(parent);
+    };
+    Ok(parent.join(file_name))
+}
+
+fn sandbox_transform_denied(error: SandboxError) -> LinuxRunError {
+    sandbox_denied(format!(
+        "failed to transform codex linux sandbox command: {error}"
+    ))
+}
+
+pub(crate) fn codex_linux_sandbox_path() -> Result<PathBuf, which::Error> {
+    if let Some(path) = std::env::var_os("RAXCELL_CODEX_LINUX_SANDBOX_BIN") {
+        return Ok(PathBuf::from(path));
+    }
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(dir) = current_exe.parent()
+    {
+        let sibling = dir.join("raxcell-codex-linux-sandbox");
+        if sibling.exists() {
+            return Ok(sibling);
+        }
+        let codex_named_sibling = dir.join("codex-linux-sandbox");
+        if codex_named_sibling.exists() {
+            return Ok(codex_named_sibling);
+        }
+    }
+    if let Ok(path) = which::which(RAXCELL_CODEX_LINUX_SANDBOX_BIN) {
+        return Ok(path);
+    }
+    which::which("codex-linux-sandbox")
+}
+
+#[allow(dead_code)]
 pub(super) fn build_bwrap_args(
     request: &RunRequest,
     cwd: &Path,
@@ -304,8 +943,17 @@ pub(super) fn build_bwrap_args(
     Ok((args, mounts.report))
 }
 
+fn filesystem_lowering_report(
+    request: &RunRequest,
+    cwd: &Path,
+) -> Result<FileSystemLoweringReport, LinuxRunError> {
+    filesystem_mounts(request, cwd).map(|mounts| mounts.report)
+}
+
 struct FilesystemMounts {
+    #[allow(dead_code)]
     read_roots: Vec<PathBuf>,
+    #[allow(dead_code)]
     write_roots: Vec<PathBuf>,
     report: FileSystemLoweringReport,
 }
@@ -574,6 +1222,7 @@ fn lowered_access_name(access: &LoweredRootAccess) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn bind_runtime_paths(args: &mut Vec<OsString>) {
     ro_bind_if_exists(args, "/usr");
     ro_bind_if_exists(args, "/etc");
@@ -583,6 +1232,7 @@ fn bind_runtime_paths(args: &mut Vec<OsString>) {
     symlink_if_root_symlink(args, "/sbin");
 }
 
+#[allow(dead_code)]
 fn ro_bind_if_exists(args: &mut Vec<OsString>, path: &str) {
     if Path::new(path).exists() {
         args.push(OsString::from("--ro-bind"));
@@ -591,6 +1241,7 @@ fn ro_bind_if_exists(args: &mut Vec<OsString>, path: &str) {
     }
 }
 
+#[allow(dead_code)]
 fn symlink_if_root_symlink(args: &mut Vec<OsString>, path: &str) {
     let Ok(target) = std::fs::read_link(path) else {
         ro_bind_if_exists(args, path);
@@ -604,6 +1255,7 @@ fn symlink_if_root_symlink(args: &mut Vec<OsString>, path: &str) {
     args.push(OsString::from(format!("/{}", name.to_string_lossy())));
 }
 
+#[allow(dead_code)]
 fn normalize_relative_root_target(target: PathBuf) -> OsString {
     if let Ok(stripped) = target.strip_prefix("/") {
         return stripped.as_os_str().to_os_string();

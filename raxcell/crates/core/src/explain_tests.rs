@@ -48,3 +48,22 @@ fn explain_backend_describes_host_observed_as_observation_only() {
             .contains(&"observation-only".to_string())
     );
 }
+
+#[test]
+fn explain_backend_describes_windows_native_primitives() {
+    let response = explain_backend(ExplainBackendRequest {
+        kind: "raxcell.explainBackend.v1".to_string(),
+        platform: Some("auto".to_string()),
+        backend_preference: vec![BackendFamily::WindowsNative],
+    });
+    assert_eq!(
+        response.selected_backend,
+        Some(BackendFamily::WindowsNative)
+    );
+    assert!(
+        response
+            .explanation
+            .isolation_primitives
+            .contains(&"windows.restricted-token".to_string())
+    );
+}

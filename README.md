@@ -285,7 +285,7 @@ Use `exitCode`, `stdout`, and `stderr` for command-level behavior. Use `ok: fals
 
 ## Repository Layout
 
-- `raxcell/sdk`: TypeScript npm package and Linux bubblewrap CLI.
+- `raxcell/sdk`: TypeScript npm package and CLI for Linux bubblewrap, macOS Seatbelt, and the Windows native runner bridge.
 - `raxcell/sdk/src/types.ts`: JSON protocol types.
 - `raxcell/sdk/src/client.ts`: TypeScript client that spawns the CLI.
 - `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI plus Linux bubblewrap and macOS Seatbelt runners.

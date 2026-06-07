@@ -14,6 +14,9 @@ pub fn run(request: RunRequest) -> RunResponse {
     match capability_report.selected_backend.clone() {
         Some(BackendFamily::LinuxBubblewrap) => linux_bubblewrap::run(request, capability_report),
         Some(BackendFamily::MacosSeatbelt) => macos_seatbelt::run(request, capability_report),
+        Some(BackendFamily::WindowsNative) => {
+            windows_native::run(request, capability_report, BackendFamily::WindowsNative)
+        }
         Some(BackendFamily::WindowsElevated) => {
             windows_native::run(request, capability_report, BackendFamily::WindowsElevated)
         }

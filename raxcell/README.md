@@ -15,7 +15,7 @@ The active npm-facing integration path for `0.1.x` is currently the TypeScript p
 For `@praxis-ai/raxcell@0.1.5`, the executable package path is:
 
 ```text
-raxcell/sdk -> @praxis-ai/raxcell -> raxcell CLI -> linux-bubblewrap
+raxcell/sdk -> @praxis-ai/raxcell -> raxcell CLI -> linux-bubblewrap / macOS Seatbelt / Windows runner bridge
 ```
 
 The Rust workspace is not the published npm CLI. Treat it as a retained lower-level implementation track while the TypeScript package carries the current Praxis/Raxode integration.
@@ -32,13 +32,13 @@ The Rust workspace contains Linux bubblewrap backend code and fixtures for:
 - filesystem lowering reports;
 - backend artifacts with bubblewrap argv.
 
-The npm CLI has the current production-facing Linux behavior, including shell filesystem effect analysis and host-visible writable grants.
+The npm CLI has the current production-facing Linux behavior, including shell filesystem effect analysis and host-visible writable grants. It also executes macOS Seatbelt on macOS hosts through `/usr/bin/sandbox-exec`.
 
 ## Native Backend Notes
 
 macOS Seatbelt and Windows native backend families are protocol-visible in the broader Raxcell contract.
 
-The Rust workspace includes source-level lowering concepts for native backends, but `0.1.x` npm releases do not execute macOS or Windows native runners yet.
+The Rust workspace owns the corrected Linux execution path: Linux requests lower through typed Codex-derived permission profiles, `SandboxManager::transform`, and the `raxcell-codex-linux-sandbox` helper. The npm CLI can delegate Linux protocol calls to this Rust worker with `RAXCELL_RUST_CLI`; its old direct-bwrap path is legacy fallback. macOS and Windows remain protocol-visible follow-up backends: macOS still needs Codex Seatbelt lowering wiring, and Windows execution is delegated to the `raxcell-windows-runner` contract until the native Codex sandbox core is wired directly.
 
 ## Verify
 

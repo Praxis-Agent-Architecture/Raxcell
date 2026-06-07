@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 fn backend_family_uses_kebab_case() {
     let value = serde_json::to_value(BackendFamily::LinuxBubblewrap).unwrap();
     assert_eq!(value, serde_json::json!("linux-bubblewrap"));
+    let value = serde_json::to_value(BackendFamily::WindowsNative).unwrap();
+    assert_eq!(value, serde_json::json!("windows-native"));
 }
 
 #[test]

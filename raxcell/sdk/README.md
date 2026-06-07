@@ -120,7 +120,7 @@ if (prepared.ok) {
 }
 ```
 
-On Linux, `prepared.backendArtifacts[0]` is a `linux-bubblewrap-argv` artifact containing the complete bubblewrap argv Raxcell would use.
+On Linux, the corrected Rust-worker path returns a `codex-linux-sandbox-argv` artifact. That artifact describes the Codex-derived helper invocation, not a TypeScript-built bubblewrap argv. The old direct-bwrap TypeScript path remains a legacy fallback when no Rust worker is configured.
 
 ### run
 
@@ -339,15 +339,15 @@ Persist these fields for every command:
 - `RunResponse.timedOut`
 - `RunResponse.backendArtifacts`
 
-For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual bubblewrap argv. `prepareRun` and `run` both expose the prepared artifacts so audit and TUI rendering can use the same facts before and after execution:
+For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual Codex Linux helper argv. `prepareRun` and `run` both expose the prepared artifacts so audit and TUI rendering can use the same facts before and after execution:
 
 ```ts
-const bwrap = prepared.backendArtifacts.find(
-  (artifact) => artifact.format === "linux-bubblewrap-argv",
+const codexLinux = prepared.backendArtifacts.find(
+  (artifact) => artifact.format === "codex-linux-sandbox-argv",
 );
 
-console.log(bwrap?.data.executable);
-console.log(bwrap?.arguments);
+console.log(codexLinux?.data.executable);
+console.log(codexLinux?.arguments);
 ```
 
 ## Linux Status
@@ -435,8 +435,8 @@ Each script prints one JSON response:
 
 Native planned artifact formats:
 
-- `linux-bubblewrap-argv`
-  - `arguments`: complete `bwrap` argv used for execution.
+- `codex-linux-sandbox-argv`
+  - `arguments`: complete Codex Linux helper argv used for execution.
   - `data.commandEnvMode`: `clean`.
   - `data.writeGrantMaterialization`: `raxcell-precreate`; Raxcell precreates missing approved writable grant paths before launching bubblewrap.
   - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.

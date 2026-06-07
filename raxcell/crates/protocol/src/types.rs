@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 pub enum BackendFamily {
     LinuxBubblewrap,
     MacosSeatbelt,
+    WindowsNative,
     WindowsElevated,
     WindowsUnelevated,
     HostObserved,

@@ -32,7 +32,7 @@ fn sample_run_request() -> RunRequest {
 
 #[test]
 fn prepare_run_lowers_linux_request_without_executing_command() {
-    if which::which("bwrap").is_err() {
+    if which::which("bwrap").is_err() || which::which("codex-linux-sandbox").is_err() {
         return;
     }
     let response = prepare_run(sample_run_request());
@@ -44,13 +44,13 @@ fn prepare_run_lowers_linux_request_without_executing_command() {
     assert!(response.filesystem_lowering.is_some());
     assert_eq!(
         response.backend_artifacts[0].format,
-        "linux-bubblewrap-argv"
+        "codex-linux-sandbox-argv"
     );
     assert!(
         response.backend_artifacts[0]
             .arguments
             .iter()
-            .any(|arg| arg == "--die-with-parent")
+            .any(|arg| arg == "--permission-profile")
     );
 }
 
