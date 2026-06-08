@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, normalize, resolve, win32 } from "node:path";
+import { delimiter, dirname, isAbsolute, normalize, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeGrantMaterializationMode } from "./backend-materialization.js";
 import { parseRunnerRunResponse } from "./runner-protocol.js";
@@ -77,12 +77,30 @@ async function main(): Promise<void> {
 
   if (command === "probe") {
     const request = await readOptionalJsonStdin() as ProbeRequest | null;
+    const delegated = runLinuxRustWorkerJson(
+      "probe",
+      request ?? defaultProbeRequest(),
+      request?.backendPreference,
+    );
+    if (delegated) {
+      writeJson(delegated);
+      return;
+    }
     writeJson(probeBackend(request?.backendPreference));
     return;
   }
 
   if (command === "explain-backend") {
     const request = await readOptionalJsonStdin() as ExplainBackendRequest | null;
+    const delegated = runLinuxRustWorkerJson(
+      "explain-backend",
+      request ?? defaultExplainBackendRequest(),
+      request?.backendPreference,
+    );
+    if (delegated) {
+      writeJson(delegated);
+      return;
+    }
     const probe = probeBackend(request?.backendPreference);
     writeJson({
       kind: "raxcell.explainBackendResult.v1",
@@ -131,12 +149,22 @@ async function main(): Promise<void> {
 
   if (command === "prepare-run") {
     const request = await readRunRequest();
+    const delegated = runLinuxRustWorkerJson("prepare-run", request, request.backendPreference);
+    if (delegated) {
+      writeJson(delegated);
+      return;
+    }
     writeJson(prepareRun(request).response);
     return;
   }
 
   if (command === "run") {
     const request = await readRunRequest();
+    const delegated = runLinuxRustWorkerJson("run", request, request.backendPreference);
+    if (delegated) {
+      writeJson(delegated);
+      return;
+    }
     writeJson(await runBackend(request));
     return;
   }
@@ -172,6 +200,90 @@ function helpText(): string {
 
 function writeJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+function defaultProbeRequest(): ProbeRequest {
+  return {
+    kind: "raxcell.probe.v1",
+    platform: "auto",
+    backendPreference: ["linux-bubblewrap"],
+    requirements: {},
+  };
+}
+
+function defaultExplainBackendRequest(): ExplainBackendRequest {
+  return {
+    kind: "raxcell.explainBackend.v1",
+    platform: "auto",
+    backendPreference: ["linux-bubblewrap"],
+  };
+}
+
+function runLinuxRustWorkerJson(
+  command: "probe" | "explain-backend" | "prepare-run" | "run",
+  request: unknown,
+  backendPreference: BackendFamily[] = [],
+): unknown | null {
+  const rustCli = linuxRustWorkerPath();
+  if (!rustCli || process.platform !== "linux" || selectBackend(backendPreference) !== "linux-bubblewrap") {
+    return null;
+  }
+  const result = spawnSync(rustCli, [command, "--stdin"], {
+    input: JSON.stringify(request),
+    encoding: "utf8",
+    env: process.env,
+    timeout: 15000,
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr.trim() || `Raxcell Rust worker exited with code ${result.status}`);
+  }
+  try {
+    const parsed = JSON.parse(result.stdout.trim());
+    validateRustWorkerResponseKind(command, parsed);
+    return parsed;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Rust worker ")) {
+      throw error;
+    }
+    throw new Error(`Invalid JSON from Raxcell Rust worker: ${String(error)}`);
+  }
+}
+
+function validateRustWorkerResponseKind(
+  command: "probe" | "explain-backend" | "prepare-run" | "run",
+  value: unknown,
+): void {
+  const expectedKind = rustWorkerResponseKind(command);
+  if (!isRecord(value) || value.kind !== expectedKind) {
+    throw new Error(`Rust worker ${command} response kind must be ${expectedKind}`);
+  }
+}
+
+function rustWorkerResponseKind(
+  command: "probe" | "explain-backend" | "prepare-run" | "run",
+): string {
+  switch (command) {
+    case "probe":
+      return "raxcell.probeResult.v1";
+    case "explain-backend":
+      return "raxcell.explainBackendResult.v1";
+    case "prepare-run":
+      return "raxcell.prepareRunResult.v1";
+    case "run":
+      return "raxcell.runResult.v1";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function linuxRustWorkerPath(): string | null {
+  const configured = process.env.RAXCELL_RUST_CLI;
+  if (!configured) {
+    return null;
+  }
+  return existsSync(configured) ? configured : null;
 }
 
 function readJsonStdin(): Promise<unknown> {
@@ -350,7 +462,8 @@ function probeMacosSeatbelt(): ProbeResponse {
 function probeWindowsNative(backend: BackendFamily): ProbeResponse {
   const isWindows = process.platform === "win32";
   const runner = windowsNativeRunnerPath();
-  const ready = isWindows && runner !== null;
+  const runnerProbe = runner ? probeWindowsRunner(runner) : null;
+  const ready = isWindows && runner !== null && runnerProbe?.ready === true;
   const missing: string[] = [];
   const nextActions: string[] = [];
 
@@ -361,6 +474,10 @@ function probeWindowsNative(backend: BackendFamily): ProbeResponse {
   if (isWindows && !runner) {
     missing.push(nativeRunnerDependency(backend));
     nextActions.push("Install a Windows native Raxcell runner or set RAXCELL_WINDOWS_RUNNER.");
+  }
+  if (isWindows && runner && runnerProbe?.ready !== true) {
+    missing.push(...(runnerProbe?.missing ?? ["codex"]));
+    nextActions.push("Install Codex CLI or set RAXCELL_CODEX_BIN for the Windows runner.");
   }
 
   return {
@@ -375,6 +492,7 @@ function probeWindowsNative(backend: BackendFamily): ProbeResponse {
     },
     limits: [
       "Windows native execution is delegated to a Raxcell Windows runner over JSON stdin/stdout.",
+      "The packaged runner delegates to Codex CLI `sandbox` with a temporary permissions profile.",
       "The runner must enforce restricted token, ACL roots, Job Object, and network controls.",
       "Raxcell reports policy gaps but does not approve them.",
     ],
@@ -385,6 +503,52 @@ function probeWindowsNative(backend: BackendFamily): ProbeResponse {
       ? `${backend} runner is ready`
       : `${backend} runner is not ready on this host`,
   };
+}
+
+function probeWindowsRunner(runner: string): { ready: boolean; missing: string[] } | null {
+  const runnerCommand = nativeRunnerCommand(runner, ["probe"]);
+  const result = spawnSync(runnerCommand.executable, runnerCommand.args, {
+    encoding: "utf8",
+    timeout: 2000,
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as { ready?: unknown; missing?: unknown };
+    return {
+      ready: parsed.ready === true,
+      missing: Array.isArray(parsed.missing)
+        ? parsed.missing.filter((entry): entry is string => typeof entry === "string")
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function nativeRunnerCommand(runner: string, args: string[]): { executable: string; args: string[] } {
+  if (runner.endsWith(".js") || runner.endsWith(".mjs")) {
+    return {
+      executable: process.execPath,
+      args: [runner, ...args],
+    };
+  }
+  if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(runner)) {
+    return {
+      executable: "cmd.exe",
+      args: ["/d", "/s", "/c", quoteCmdInvocation(runner, args)],
+    };
+  }
+  return { executable: runner, args };
+}
+
+function quoteCmdInvocation(executable: string, args: string[]): string {
+  return [executable, ...args].map(quoteCmdArg).join(" ");
+}
+
+function quoteCmdArg(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
 }
 
 function probeUnattachedNativeBackend(backend: BackendFamily): ProbeResponse {
@@ -405,7 +569,7 @@ function probeUnattachedNativeBackend(backend: BackendFamily): ProbeResponse {
       timeout: "partial",
     },
     limits: [
-      `${backend} is protocol-visible but not executable in the 0.1.x npm CLI.`,
+      `${backend} is protocol-visible, but this host or runner attachment cannot execute it.`,
       "Raxcell reports policy gaps but does not approve them.",
     ],
     weaknesses: [],
@@ -866,10 +1030,11 @@ function prepareWindowsNative(
     backend,
     filesystemLowering,
   );
+  const runnerCommand = nativeRunnerCommand(runner, ["run"]);
   const backendArtifacts = [
     {
       ...plannedArtifact,
-      arguments: [runner, "run"],
+      arguments: [runnerCommand.executable, ...runnerCommand.args],
       data: {
         ...plannedArtifact.data,
         attached: true,
@@ -892,8 +1057,8 @@ function prepareWindowsNative(
       backendArtifacts,
       capabilityReport,
     },
-    executable: runner,
-    args: ["run"],
+    executable: runnerCommand.executable,
+    args: runnerCommand.args,
     stdin: JSON.stringify(runnerRequest),
     outputMode: "run-result-json",
   };
@@ -1278,6 +1443,17 @@ function spawnPreparedCommand(
         }));
         return;
       }
+      const backendFailure = preparedCommandBackendFailure({
+        stdout,
+        stderr,
+        timedOut,
+        exitCode: timedOut ? null : code,
+        prepared,
+      });
+      if (backendFailure) {
+        resolvePromise(backendFailure);
+        return;
+      }
       resolvePromise({
         kind: "raxcell.runResult.v1",
         ok: true,
@@ -1310,6 +1486,55 @@ function spawnPreparedCommand(
     });
     child.stdin.end(prepared.stdin ?? request.command.stdin ?? "");
   });
+}
+
+function preparedCommandBackendFailure(input: {
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  exitCode: number | null;
+  prepared: PreparedBackendRun;
+}): RunResponse | null {
+  if (input.timedOut) {
+    return {
+      kind: "raxcell.runResult.v1",
+      ok: false,
+      backend: input.prepared.response.backend,
+      exitCode: null,
+      stdout: input.stdout,
+      stderr: input.stderr,
+      timedOut: true,
+      denial: denial("RUNNER_TIMED_OUT", "Sandbox command timed out."),
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering: input.prepared.response.filesystemLowering,
+      backendArtifacts: input.prepared.response.backendArtifacts,
+      fallback: null,
+      capabilityReport: input.prepared.response.capabilityReport,
+    };
+  }
+
+  const message = input.stderr.trimStart();
+  if (input.prepared.response.backend === "linux-bubblewrap" && message.startsWith("bwrap:")) {
+    return {
+      kind: "raxcell.runResult.v1",
+      ok: false,
+      backend: input.prepared.response.backend,
+      exitCode: input.exitCode,
+      stdout: input.stdout,
+      stderr: input.stderr,
+      timedOut: false,
+      denial: denial("BACKEND_EXECUTION_FAILED", message),
+      policyDecision: null,
+      environmentGap: null,
+      filesystemLowering: input.prepared.response.filesystemLowering,
+      backendArtifacts: input.prepared.response.backendArtifacts,
+      fallback: null,
+      capabilityReport: input.prepared.response.capabilityReport,
+    };
+  }
+
+  return null;
 }
 
 function parsePreparedRunResultJson(input: {
@@ -1720,14 +1945,28 @@ function networkModeForRequest(request: RunRequest): "allow" | "deny" {
 }
 
 function findExecutable(name: string): string | null {
-  if (name.includes("/") && existsSync(name)) {
+  if ((name.includes("/") || name.includes("\\") || isAbsolute(name)) && existsSync(name)) {
     return name;
   }
-  const result = spawnSync("which", [name], {
-    encoding: "utf8",
-  });
-  if (result.status === 0) {
-    return result.stdout.trim();
+  const extensions = process.platform === "win32"
+    ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
+    : [""];
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir) {
+      continue;
+    }
+    for (const extension of extensions) {
+      const candidate = resolve(dir, extension ? `${name}${extension.toLowerCase()}` : name);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+      if (process.platform === "win32") {
+        const upperCandidate = resolve(dir, `${name}${extension.toUpperCase()}`);
+        if (existsSync(upperCandidate)) {
+          return upperCandidate;
+        }
+      }
+    }
   }
   return null;
 }

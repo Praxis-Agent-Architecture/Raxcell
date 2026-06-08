@@ -1,0 +1,206 @@
+kind: raxcell.policyPack.v1
+name: praxis-profiles
+
+# Praxis profile examples for Raxcell enforcement lowering.
+#
+# Boundary:
+# - Raxcell parses and lowers these profiles; it does not decide Praxis policy,
+#   ask humans, persist audit state, or rewrite tool intent.
+# - `fallback.mode` stays `none` by default. Upper runtimes own fallback choices.
+# - Praxis signs explicit `policyGrants` after its own approval/policy checks.
+#   Those grants belong on prepare/run requests, not in this policy pack, so
+#   lowered grant roots can remain `source: policy-grant`.
+# - Runtime roots reported by a backend remain `source: backend-runtime`; they
+#   should not be treated as grants.
+#
+# Expected prepare/run handoff:
+# - `policyDecision` is expected for concrete command paths or cwd values outside
+#   declared roots/granted roots, such as `cwd-outside-declared-roots` or
+#   `path-outside-declared-roots`.
+# - `environmentGap` is expected for unresolved environment/backend facts, such as
+#   dynamic shell paths, missing backend dependencies, host platform mismatch, or
+#   unattached native runners.
+profiles:
+  # Observation-only profile for diagnostics. It intentionally declares no
+  # filesystem roots and uses the non-enforcing host-observed backend family.
+  host-observed:
+    preset: host-observed
+    filesystem:
+      read: []
+      write: []
+      denyRead: []
+      denyWrite: []
+    network: allow
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 300000
+      maxOutputBytes: 2000000
+    backendPreference:
+      - host-observed
+    fallback:
+      mode: none
+
+  # Read-only workspace sandbox. Concrete reads outside $workspace should become
+  # policyDecision unless Praxis supplies an explicit read policyGrant.
+  workspace-readonly-no-network:
+    preset: workspace-readonly
+    filesystem:
+      read:
+        - $workspace
+      write: []
+      denyRead: []
+      denyWrite: []
+    network: deny
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 600000
+      maxOutputBytes: 2000000
+    backendPreference:
+      - linux-bubblewrap
+    fallback:
+      mode: none
+
+  # Default mutable workspace shell profile with no network. Concrete external
+  # paths still require Praxis policy grants; this profile does not approve them.
+  workspace-write-no-network:
+    preset: workspace-write
+    filesystem:
+      read:
+        - $workspace
+        - $home/.cache
+      write:
+        - $workspace
+        - $tmp/build
+      denyRead: []
+      denyWrite: []
+    network: deny
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 600000
+      maxOutputBytes: 2000000
+    backendPreference:
+      - linux-bubblewrap
+    fallback:
+      mode: none
+
+  # Network-capable workspace profile. Praxis should select this only after its
+  # own policy allows network use for the action/session.
+  workspace-write-network:
+    preset: workspace-write
+    filesystem:
+      read:
+        - $workspace
+        - $home/.cache
+      write:
+        - $workspace
+        - $tmp/build
+      denyRead: []
+      denyWrite: []
+    network: allow
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 600000
+      maxOutputBytes: 2000000
+    backendPreference:
+      - linux-bubblewrap
+    fallback:
+      mode: none
+
+  # Example template for a pre-approved external read scope. In production,
+  # Praxis should normally pass the external path as a read policyGrant on the
+  # request so the lowering report marks it `source: policy-grant`.
+  external-read-approved:
+    preset: no-filesystem-write
+    filesystem:
+      read:
+        - $workspace
+        - $approvedExternalRead
+      write: []
+      denyRead: []
+      denyWrite: []
+    network: deny
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 600000
+      maxOutputBytes: 2000000
+    backendPreference:
+      - linux-bubblewrap
+    fallback:
+      mode: none
+
+  # Example template for a pre-approved external write scope. In production,
+  # Praxis should normally pass the external path as a write policyGrant on the
+  # request so the lowering report marks it `source: policy-grant`.
+  external-write-approved:
+    preset: workspace-write
+    filesystem:
+      read:
+        - $workspace
+        - $approvedExternalWrite
+      write:
+        - $workspace
+        - $approvedExternalWrite
+      denyRead: []
+      denyWrite: []
+    network: deny
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 600000
+      maxOutputBytes: 2000000
+    backendPreference:
+      - linux-bubblewrap
+    fallback:
+      mode: none
+
+  # Most conservative profile for uncertain tool intents. Use this when Praxis
+  # wants missing declarations to fail closed through policyDecision/environmentGap.
+  strict-fail-closed:
+    preset: no-filesystem-write
+    filesystem:
+      read:
+        - $workspace
+      write: []
+      denyRead: []
+      denyWrite: []
+    network: deny
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 120000
+      maxOutputBytes: 1000000
+    backendPreference:
+      - linux-bubblewrap
+    fallback:
+      mode: none
+
+  # Mutable workspace profile with a declared scratch/debug artifact root so the
+  # backend can return richer lowering artifacts without widening fallback.
+  debug-artifact-rich:
+    preset: workspace-write
+    filesystem:
+      read:
+        - $workspace
+        - $home/.cache
+        - $tmp/debug
+      write:
+        - $workspace
+        - $tmp/build
+        - $tmp/debug
+      denyRead: []
+      denyWrite: []
+    network: deny
+    process:
+      spawn: true
+    resources:
+      timeoutMs: 900000
+      maxOutputBytes: 5000000
+    backendPreference:
+      - linux-bubblewrap
+    fallback:
+      mode: none

@@ -1,0 +1,16 @@
+[package]
+name = "raxcell-codex-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "raxcell_codex_protocol"
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -50,6 +50,19 @@ fn backend_explanation(probe: &ProbeResponse) -> BackendExplanation {
             limits: backend_limits(probe),
             public_safe_message: probe.public_safe_message.clone(),
         },
+        Some(BackendFamily::WindowsNative) => BackendExplanation {
+            backend: Some(BackendFamily::WindowsNative),
+            host_platforms: vec!["windows".to_string()],
+            isolation_primitives: vec![
+                "windows.restricted-token".to_string(),
+                "windows-acl.workspace-rules".to_string(),
+                "windows-filtering-platform.network".to_string(),
+                "process.timeout".to_string(),
+            ],
+            runtime_roots: Vec::new(),
+            limits: backend_limits(probe),
+            public_safe_message: probe.public_safe_message.clone(),
+        },
         Some(BackendFamily::WindowsElevated) => BackendExplanation {
             backend: Some(BackendFamily::WindowsElevated),
             host_platforms: vec!["windows".to_string()],

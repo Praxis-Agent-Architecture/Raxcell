@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 fn backend_family_uses_kebab_case() {
     let value = serde_json::to_value(BackendFamily::LinuxBubblewrap).unwrap();
     assert_eq!(value, serde_json::json!("linux-bubblewrap"));
+    let value = serde_json::to_value(BackendFamily::WindowsNative).unwrap();
+    assert_eq!(value, serde_json::json!("windows-native"));
 }
 
 #[test]
@@ -118,6 +120,7 @@ fn prepare_run_response_uses_stable_wire_names() {
         ok: true,
         backend: Some(BackendFamily::LinuxBubblewrap),
         denial: None,
+        environment_gap: None,
         policy_decision: None,
         filesystem_lowering: Some(FileSystemLoweringReport {
             declared_roots: vec![LoweredRoot {
@@ -149,6 +152,7 @@ fn prepare_run_response_uses_stable_wire_names() {
             "ok": true,
             "backend": "linux-bubblewrap",
             "denial": null,
+            "environmentGap": null,
             "policyDecision": null,
             "filesystemLowering": {
                 "declaredRoots": [
@@ -170,6 +174,149 @@ fn prepare_run_response_uses_stable_wire_names() {
             "capabilityReport": null
         })
     );
+}
+
+#[test]
+fn run_response_uses_stable_backend_artifacts_wire_name() {
+    let response = RunResponse {
+        kind: "raxcell.runResult.v1".to_string(),
+        ok: true,
+        backend: Some(BackendFamily::LinuxBubblewrap),
+        exit_code: Some(0),
+        stdout: "done".to_string(),
+        stderr: String::new(),
+        timed_out: false,
+        denial: None,
+        environment_gap: None,
+        policy_decision: None,
+        filesystem_lowering: Some(FileSystemLoweringReport {
+            declared_roots: vec![LoweredRoot {
+                path: "/workspace".to_string(),
+                access: LoweredRootAccess::Write,
+                source: LoweredRootSource::Declared,
+            }],
+            runtime_roots: Vec::new(),
+            policy_grants: Vec::new(),
+            warnings: Vec::new(),
+        }),
+        backend_artifacts: vec![BackendLoweringArtifact {
+            backend: BackendFamily::LinuxBubblewrap,
+            format: "codex-linux-sandbox-argv".to_string(),
+            arguments: vec!["--sandbox-policy-cwd".to_string()],
+            data: BTreeMap::from([(
+                "executable".to_string(),
+                serde_json::json!("/usr/lib/raxcell-codex-linux-sandbox"),
+            )]),
+            warnings: Vec::new(),
+        }],
+        fallback: None,
+        capability_report: None,
+    };
+    let value = serde_json::to_value(response).unwrap();
+    assert_eq!(
+        value["backendArtifacts"],
+        serde_json::json!([
+            {
+                "backend": "linux-bubblewrap",
+                "format": "codex-linux-sandbox-argv",
+                "arguments": ["--sandbox-policy-cwd"],
+                "data": { "executable": "/usr/lib/raxcell-codex-linux-sandbox" },
+                "warnings": []
+            }
+        ])
+    );
+}
+
+#[test]
+fn environment_gap_round_trips_on_prepare_and_run_responses() {
+    let gap = EnvironmentGap {
+        reason: "missing-backend-dependency".to_string(),
+        path: Some("dependency.binary.bwrap".to_string()),
+        required: vec!["install.bwrap".to_string()],
+        public_safe_message: "bubblewrap is required before this backend can run".to_string(),
+    };
+
+    let prepare = PrepareRunResponse {
+        kind: "raxcell.prepareRunResult.v1".to_string(),
+        ok: false,
+        backend: Some(BackendFamily::LinuxBubblewrap),
+        denial: None,
+        environment_gap: Some(gap.clone()),
+        policy_decision: None,
+        filesystem_lowering: None,
+        backend_artifacts: Vec::new(),
+        capability_report: None,
+    };
+    let value = serde_json::to_value(&prepare).unwrap();
+    assert_eq!(
+        value["environmentGap"],
+        serde_json::json!({
+            "reason": "missing-backend-dependency",
+            "path": "dependency.binary.bwrap",
+            "required": ["install.bwrap"],
+            "publicSafeMessage": "bubblewrap is required before this backend can run"
+        })
+    );
+    let decoded: PrepareRunResponse = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded, prepare);
+
+    let run = RunResponse {
+        kind: "raxcell.runResult.v1".to_string(),
+        ok: false,
+        backend: Some(BackendFamily::LinuxBubblewrap),
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+        timed_out: false,
+        denial: None,
+        environment_gap: Some(gap),
+        policy_decision: None,
+        filesystem_lowering: None,
+        backend_artifacts: Vec::new(),
+        fallback: None,
+        capability_report: None,
+    };
+    let value = serde_json::to_value(&run).unwrap();
+    assert_eq!(
+        value["environmentGap"]["reason"],
+        serde_json::json!("missing-backend-dependency")
+    );
+    let decoded: RunResponse = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded, run);
+}
+
+#[test]
+fn response_decoding_defaults_missing_environment_gap_to_none() {
+    let run_value = serde_json::json!({
+        "kind": "raxcell.runResult.v1",
+        "ok": false,
+        "backend": "linux-bubblewrap",
+        "exitCode": null,
+        "stdout": "",
+        "stderr": "",
+        "timedOut": false,
+        "denial": null,
+        "policyDecision": null,
+        "filesystemLowering": null,
+        "fallback": null,
+        "capabilityReport": null
+    });
+    let decoded: RunResponse = serde_json::from_value(run_value).unwrap();
+    assert_eq!(decoded.environment_gap, None);
+    assert!(decoded.backend_artifacts.is_empty());
+
+    let prepare_value = serde_json::json!({
+        "kind": "raxcell.prepareRunResult.v1",
+        "ok": false,
+        "backend": "linux-bubblewrap",
+        "denial": null,
+        "policyDecision": null,
+        "filesystemLowering": null,
+        "backendArtifacts": [],
+        "capabilityReport": null
+    });
+    let decoded: PrepareRunResponse = serde_json::from_value(prepare_value).unwrap();
+    assert_eq!(decoded.environment_gap, None);
 }
 
 #[test]

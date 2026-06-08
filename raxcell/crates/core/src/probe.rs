@@ -1,5 +1,10 @@
+use crate::backends::linux_bubblewrap::codex_linux_sandbox_path;
 use raxcell_protocol::{BackendFamily, CapabilityLevel, ProbeRequest, ProbeResponse};
 use std::collections::BTreeMap;
+
+pub(crate) fn linux_bubblewrap_helper_dependency_name() -> &'static str {
+    "dependency.binary.raxcell-codex-linux-sandbox"
+}
 
 pub fn probe(request: ProbeRequest) -> ProbeResponse {
     let selected_backend = choose_backend(&request);
@@ -18,6 +23,9 @@ pub fn probe(request: ProbeRequest) -> ProbeResponse {
             supports.insert("process.spawn".to_string(), CapabilityLevel::Full);
             supports.insert("resource.timeout".to_string(), CapabilityLevel::Full);
             if cfg!(target_os = "linux") {
+                if codex_linux_sandbox_path().is_err() {
+                    missing.push(linux_bubblewrap_helper_dependency_name().to_string());
+                }
                 if which::which("bwrap").is_err() {
                     missing.push("dependency.binary.bwrap".to_string());
                 }
@@ -38,7 +46,7 @@ pub fn probe(request: ProbeRequest) -> ProbeResponse {
                 missing.push("current-host-is-not-macos".to_string());
             }
         }
-        Some(BackendFamily::WindowsElevated) => {
+        Some(BackendFamily::WindowsNative) | Some(BackendFamily::WindowsElevated) => {
             supports.insert("filesystem.readRestrict".to_string(), CapabilityLevel::Full);
             supports.insert(
                 "filesystem.writeRestrict".to_string(),
@@ -134,7 +142,7 @@ fn choose_backend(request: &ProbeRequest) -> Option<BackendFamily> {
     } else if cfg!(target_os = "macos") {
         Some(BackendFamily::MacosSeatbelt)
     } else if cfg!(target_os = "windows") {
-        Some(BackendFamily::WindowsElevated)
+        Some(BackendFamily::WindowsNative)
     } else {
         Some(BackendFamily::External)
     }

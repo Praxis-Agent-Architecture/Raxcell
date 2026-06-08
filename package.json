@@ -4,7 +4,9 @@
   "description": "Workspace for the Raxcell execution enforcement sandbox SDK.",
   "scripts": {
     "build:sdk": "pnpm --dir raxcell/sdk build",
-    "test:sdk": "pnpm --dir raxcell/sdk test"
+    "test:sdk": "pnpm --dir raxcell/sdk test",
+    "smoke:macos": "bash scripts/native-smoke-macos.sh",
+    "smoke:windows": "powershell -ExecutionPolicy Bypass -File scripts/native-smoke-windows.ps1"
   },
   "engines": {
     "node": ">=22",

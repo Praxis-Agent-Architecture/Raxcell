@@ -1,7 +1,8 @@
 use crate::backends::{linux_bubblewrap, macos_seatbelt, windows_native};
 use crate::probe::probe;
 use raxcell_protocol::{
-    BackendFamily, Denial, DenialCode, ProbeRequest, ProbeResponse, RunRequest, RunResponse,
+    BackendFamily, Denial, DenialCode, EnvironmentGap, ProbeRequest, ProbeResponse, RunRequest,
+    RunResponse,
 };
 
 pub fn run(request: RunRequest) -> RunResponse {
@@ -14,6 +15,9 @@ pub fn run(request: RunRequest) -> RunResponse {
     match capability_report.selected_backend.clone() {
         Some(BackendFamily::LinuxBubblewrap) => linux_bubblewrap::run(request, capability_report),
         Some(BackendFamily::MacosSeatbelt) => macos_seatbelt::run(request, capability_report),
+        Some(BackendFamily::WindowsNative) => {
+            windows_native::run(request, capability_report, BackendFamily::WindowsNative)
+        }
         Some(BackendFamily::WindowsElevated) => {
             windows_native::run(request, capability_report, BackendFamily::WindowsElevated)
         }
@@ -73,8 +77,15 @@ fn fail_closed(
             message: format!("{message}; actionId={}", request.action.action_id),
             public_safe: true,
         }),
+        environment_gap: Some(EnvironmentGap {
+            reason: "backend-capability-gap".to_string(),
+            path: None,
+            required: vec!["backend.execution".to_string()],
+            public_safe_message: message,
+        }),
         policy_decision: None,
         filesystem_lowering: None,
+        backend_artifacts: Vec::new(),
         fallback: None,
         capability_report: Some(capability_report),
     }

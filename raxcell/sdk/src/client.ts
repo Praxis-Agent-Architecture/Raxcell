@@ -79,7 +79,10 @@ function runJson<T extends { kind: string }>(
   expectedKind: T["kind"],
 ): Promise<T> {
   return new Promise((resolve, reject) => {
-    const child = spawn(binaryPath, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(binaryPath, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: needsWindowsCommandShell(binaryPath),
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -113,4 +116,8 @@ function runJson<T extends { kind: string }>(
     });
     child.stdin.end(JSON.stringify(input));
   });
+}
+
+function needsWindowsCommandShell(binaryPath: string): boolean {
+  return process.platform === "win32" && /\.(?:cmd|bat)$/i.test(binaryPath);
 }

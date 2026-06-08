@@ -1,0 +1,15 @@
+[package]
+name = "raxcell-codex-sandboxing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "raxcell_codex_sandboxing"
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+raxcell-codex-protocol = { path = "../codex-protocol" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

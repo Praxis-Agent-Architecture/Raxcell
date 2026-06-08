@@ -1,7 +1,8 @@
 use crate::backends::{linux_bubblewrap, macos_seatbelt, windows_native};
 use crate::probe::probe;
 use raxcell_protocol::{
-    BackendFamily, Denial, DenialCode, PrepareRunResponse, ProbeRequest, ProbeResponse, RunRequest,
+    BackendFamily, Denial, DenialCode, EnvironmentGap, PrepareRunResponse, ProbeRequest,
+    ProbeResponse, RunRequest,
 };
 
 pub fn prepare_run(request: RunRequest) -> PrepareRunResponse {
@@ -17,6 +18,9 @@ pub fn prepare_run(request: RunRequest) -> PrepareRunResponse {
         }
         Some(BackendFamily::MacosSeatbelt) => {
             macos_seatbelt::prepare_run(request, capability_report)
+        }
+        Some(BackendFamily::WindowsNative) => {
+            windows_native::prepare_run(request, capability_report, BackendFamily::WindowsNative)
         }
         Some(BackendFamily::WindowsElevated) => {
             windows_native::prepare_run(request, capability_report, BackendFamily::WindowsElevated)
@@ -55,6 +59,12 @@ fn fail_closed(
             code,
             message: format!("{message}; actionId={}", request.action.action_id),
             public_safe: true,
+        }),
+        environment_gap: Some(EnvironmentGap {
+            reason: "backend-capability-gap".to_string(),
+            path: None,
+            required: vec!["backend.execution".to_string()],
+            public_safe_message: message,
         }),
         policy_decision: None,
         filesystem_lowering: None,

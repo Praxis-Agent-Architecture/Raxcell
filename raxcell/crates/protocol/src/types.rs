@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 pub enum BackendFamily {
     LinuxBubblewrap,
     MacosSeatbelt,
+    WindowsNative,
     WindowsElevated,
     WindowsUnelevated,
     HostObserved,
@@ -175,6 +176,17 @@ pub struct Denial {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentGap {
+    pub reason: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub required: Vec<String>,
+    #[serde(rename = "publicSafeMessage")]
+    pub public_safe_message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FallbackReport {
     pub mode: String,
     pub protects: Vec<String>,
@@ -196,10 +208,14 @@ pub struct RunResponse {
     #[serde(rename = "timedOut")]
     pub timed_out: bool,
     pub denial: Option<Denial>,
+    #[serde(default, rename = "environmentGap")]
+    pub environment_gap: Option<EnvironmentGap>,
     #[serde(default, rename = "policyDecision")]
     pub policy_decision: Option<PolicyDecisionRequired>,
     #[serde(default, rename = "filesystemLowering")]
     pub filesystem_lowering: Option<FileSystemLoweringReport>,
+    #[serde(default, rename = "backendArtifacts")]
+    pub backend_artifacts: Vec<BackendLoweringArtifact>,
     pub fallback: Option<FallbackReport>,
     #[serde(rename = "capabilityReport")]
     pub capability_report: Option<ProbeResponse>,
@@ -211,6 +227,8 @@ pub struct PrepareRunResponse {
     pub ok: bool,
     pub backend: Option<BackendFamily>,
     pub denial: Option<Denial>,
+    #[serde(default, rename = "environmentGap")]
+    pub environment_gap: Option<EnvironmentGap>,
     #[serde(default, rename = "policyDecision")]
     pub policy_decision: Option<PolicyDecisionRequired>,
     #[serde(default, rename = "filesystemLowering")]

@@ -18,7 +18,7 @@ It does:
 - policy-decision handoff;
 - sandboxed command execution;
 - filesystem lowering reports;
-- backend-specific artifacts such as Linux bubblewrap argv.
+- backend-specific artifacts such as Codex Linux helper argv.
 
 It does not:
 
@@ -36,8 +36,9 @@ Praxis Agent / Harness
   -> Praxis policy middleware
   -> @praxis-ai/raxcell client
   -> Raxcell CLI / worker
-  -> linux-bubblewrap now
-  -> macOS Seatbelt / Windows native later
+  -> Codex core-backed Linux now
+  -> macOS Seatbelt planned/partial
+  -> Windows native runner bridge/planned
 ```
 
 ## Current 0.1.5 Runtime Contract
@@ -52,13 +53,15 @@ const raxcell = new RaxcellClient({
 });
 ```
 
-For development against this repository, Praxis can point directly at the build artifact:
+For development against this repository, Praxis can point directly at the build artifact and enable the corrected Linux Rust worker path:
 
 ```bash
 RAXCELL_BIN=/home/proview/Desktop/Praxis_series/development/Raxcell/raxcell/sdk/dist/cli.js
+RAXCELL_RUST_CLI=/home/proview/Desktop/Praxis_series/development/Raxcell/raxcell/target/debug/raxcell
+RAXCELL_CODEX_LINUX_SANDBOX_BIN=/home/proview/Desktop/Praxis_series/development/Raxcell/raxcell/target/debug/raxcell-codex-linux-sandbox
 ```
 
-The current package ships a TypeScript/Node CLI with Linux bubblewrap and macOS Seatbelt runners. Windows native execution is delegated to a native runner contract: set `RAXCELL_WINDOWS_RUNNER` or expose `raxcell-windows-runner` on `PATH`.
+The current package ships a TypeScript/Node CLI facade. On Linux, the corrected path delegates to the Rust worker when `RAXCELL_RUST_CLI` is configured and returns Codex Linux helper artifacts; without that worker, the old direct-bwrap TypeScript path is legacy fallback. macOS Seatbelt is protocol-visible and planned/partial until Codex Seatbelt lowering is wired. Windows native execution is a runner bridge/planned path: set `RAXCELL_WINDOWS_RUNNER` or expose `raxcell-windows-runner` on `PATH`.
 
 ## Core Methods
 
@@ -78,7 +81,7 @@ if (!probe.ready) {
 }
 ```
 
-On Linux, a ready response means bubblewrap is available and Raxcell can enforce filesystem, network, process, and timeout boundaries.
+On Linux, a ready corrected response means Raxcell can lower through the Codex-derived helper path and enforce filesystem, network, process, and timeout boundaries. The public backend family may still be `linux-bubblewrap` for compatibility.
 
 ### explainBackend
 
@@ -120,7 +123,7 @@ if (prepared.ok) {
 }
 ```
 
-On Linux, `prepared.backendArtifacts[0]` is a `linux-bubblewrap-argv` artifact containing the complete bubblewrap argv Raxcell would use.
+On Linux, the corrected Rust-worker path returns a `codex-linux-sandbox-argv` artifact. That artifact describes the Codex-derived helper invocation, not a TypeScript-built bubblewrap argv. The old direct-bwrap TypeScript path may return `linux-bubblewrap-argv`, but that format is legacy fallback only.
 
 ### run
 
@@ -135,6 +138,8 @@ if (!result.ok) {
 ```
 
 The result includes stdout, stderr, exit code, timeout state, denial, and `filesystemLowering`.
+
+`run.ok` describes whether Raxcell launched and managed the sandbox backend. A nonzero child command exit remains `ok: true` with `exitCode != 0`; `ok: false` is reserved for backend failure, denial, timeout, policy handoff, or environment gaps.
 
 ## RunRequest Shape
 
@@ -270,7 +275,7 @@ const grant: PolicyGrant = {
 };
 ```
 
-Then retry `prepareRun()` or call `run()` with the updated request.
+Then retry `prepareRun()` and call `run()` only after the updated request prepares cleanly.
 
 ## Shell Filesystem Effects
 
@@ -300,13 +305,15 @@ Dynamic paths fail closed as environment facts, not policy grants:
   "ok": false,
   "policyDecision": null,
   "environmentGap": {
-    "reason": "shell-dynamic-path-unresolved",
+    "reason": "dynamic-shell-path-unresolved",
     "path": "$HOME/a.txt",
-    "required": ["write"],
+    "required": ["command.rewrite.static-path"],
     "publicSafeMessage": "The command contains a dynamic shell path that Raxcell cannot safely normalize."
   }
 }
 ```
+
+The legacy TypeScript direct-backend path may still spell this reason as `shell-dynamic-path-unresolved`; Praxis should route both spellings to rewrite/clarification, not to a grant.
 
 Raxcell does not expand `$HOME`, `${TARGET}`, `~`, backticks, command substitutions, `%USERPROFILE%`, `%TARGET%`, or delayed `!VAR!` references from `process.env` or `request.command.env`. Praxis can surface this gap, ask the user, rewrite the command into concrete paths, or deny.
 
@@ -331,44 +338,48 @@ Persist these fields for every command:
 
 - `RunRequest.action.actionId`
 - `RunRequest.action.ownerRuntime`
+- `RunRequest.backendPreference`
+- `RunRequest.policyGrants`
 - `PrepareRunResponse.filesystemLowering`
 - `PrepareRunResponse.backendArtifacts`
 - `PrepareRunResponse.policyDecision`
+- `PrepareRunResponse.environmentGap`
 - `RunResponse.denial`
+- `RunResponse.environmentGap`
 - `RunResponse.exitCode`
 - `RunResponse.timedOut`
 - `RunResponse.backendArtifacts`
 
-For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual bubblewrap argv. `prepareRun` and `run` both expose the prepared artifacts so audit and TUI rendering can use the same facts before and after execution:
+For Linux, `backendArtifacts` lets Praxis compare the intended policy with the actual Codex Linux helper argv. `prepareRun` and `run` both expose the prepared artifacts so audit and TUI rendering can use the same facts before and after execution:
 
 ```ts
-const bwrap = prepared.backendArtifacts.find(
-  (artifact) => artifact.format === "linux-bubblewrap-argv",
+const codexLinux = prepared.backendArtifacts.find(
+  (artifact) => artifact.format === "codex-linux-sandbox-argv",
 );
 
-console.log(bwrap?.data.executable);
-console.log(bwrap?.arguments);
+console.log(codexLinux?.data.executable);
+console.log(codexLinux?.arguments);
 ```
 
-## Linux Status
+## Backend Status
 
-Linux is usable in `0.1.5`:
+Linux is Codex core-backed on the corrected Rust-worker path:
 
-- `probe` detects `linux-bubblewrap`;
-- `prepareRun` returns filesystem lowering and bubblewrap argv;
-- `run` executes through bubblewrap;
+- `probe` can still select the compatibility backend family `linux-bubblewrap`;
+- successful corrected `prepareRun` returns `codex-linux-sandbox-argv`;
+- `run` executes through the Codex-derived Linux helper;
 - missing declared roots fail closed;
 - cwd outside declared roots returns `POLICY_DECISION_REQUIRED`;
-- explicit `policyGrants` can authorize cwd;
-- network deny uses bubblewrap network unshare;
+- explicit upper-runtime `policyGrants` can authorize cwd/path access;
+- network deny uses the Codex Linux helper boundary;
 - timeout is enforced by Raxcell process management;
 - common shell/Python/Node filesystem effects are reported during `prepareRun`.
+
+`linux-bubblewrap-argv` is the legacy TypeScript fallback artifact. Keep it for compatibility, but do not treat it as proof that the Codex-backed Linux path was used.
 
 ## WSL Status
 
 WSL2 should follow the Linux path conceptually because it uses Linux userspace. Treat it as Linux-bubblewrap once the host has a working `bwrap`.
-
-## macOS And Windows Status
 
 The protocol already exposes backend families:
 
@@ -377,24 +388,74 @@ The protocol already exposes backend families:
 - `windows-elevated`
 - `windows-unelevated`
 
-Raxcell can execute `macos-seatbelt` on macOS hosts when `/usr/bin/sandbox-exec` is available. Windows native execution requires a runner binary that enforces restricted token, ACL roots, Job Object limits, and network controls.
+`macos-seatbelt` is planned/partial until Codex Seatbelt lowering is wired. A local SBPL string plus `/usr/bin/sandbox-exec` uses the same OS primitive, but it is not equivalent to Codex lowering unless the Codex lowering path produced it.
+
+Windows native execution is bridge/planned until direct native `windows-sandbox-rs` API smoke passes. The current runner contract can delegate execution, but it is not the final native API integration.
 
 When selected through `backendPreference`, Windows backends return native capability facts and planned lowering artifacts. They fail closed with `environmentGap.reason = "host-platform-mismatch"` on non-Windows hosts, or `environmentGap.reason = "native-backend-runner-unattached"` on Windows hosts without a runner. They do not ask for approval, grant policy, or fall back to host execution.
 
+## Native Backend Smoke Scripts
+
+This package includes reviewer smoke scripts for native backend validation outside Praxis:
+
+- `pnpm smoke:macos` runs `scripts/smoke-macos-seatbelt.mjs`;
+- `pnpm smoke:windows` runs `scripts/smoke-windows-native.mjs`.
+
+They exercise the same JSON stdin/stdout CLI contract as `RaxcellClient`: `--version`, `probe`, `explain-backend`, `prepare-run`, and `run` when the backend is ready.
+
+macOS:
+
+```bash
+cd raxcell/sdk
+pnpm install --frozen-lockfile
+pnpm build
+pnpm smoke:macos
+```
+
+Windows PowerShell:
+
+```powershell
+cd raxcell\sdk
+pnpm install --frozen-lockfile
+pnpm build
+pnpm smoke:windows
+```
+
+To test an installed binary or a custom build, set `RAXCELL_BIN`:
+
+```bash
+RAXCELL_BIN=/absolute/path/to/raxcell pnpm smoke:macos
+```
+
+```powershell
+$env:RAXCELL_BIN = "C:\absolute\path\to\raxcell.cmd"
+pnpm smoke:windows
+```
+
+Each script prints one JSON response:
+
+```json
+{
+  "kind": "raxcell.nativeSmokeResult.v1",
+  "backend": "macos-seatbelt",
+  "ok": true,
+  "ready": true,
+  "results": []
+}
+```
+
+`ok: true` means every expected fact matched. If the selected backend is not available on that host, the script still verifies fail-closed `environmentGap` behavior and skips the real `run` smoke. Windows native execution additionally requires `RAXCELL_WINDOWS_RUNNER` or `raxcell-windows-runner` on `PATH`; otherwise the expected fail-closed reason is `native-backend-runner-unattached`.
+
 Native planned artifact formats:
 
-- `linux-bubblewrap-argv`
-  - `arguments`: complete `bwrap` argv used for execution.
-  - `data.commandEnvMode`: `clean`.
-  - `data.writeGrantMaterialization`: `raxcell-precreate`; Raxcell precreates missing approved writable grant paths before launching bubblewrap.
-  - `data.commandEnv`: effective command environment after Raxcell lowering, including the default command `PATH` unless the request overrides it.
-  - `data.rootRules`: source-aware read/write roots with `source=declared|policy-grant` for audit display.
-  - `data.readRoots` / `data.writeRoots`: lowered roots from declarations and grants.
-  - `data.runtimeRoots`: backend-runtime read roots mounted so bubblewrap can execute system tools and libraries.
-  - `data.networkMode`: common audit value, `deny` or `allow`.
-  - `data.timeoutMs`: parent-enforced timeout for the spawned `bwrap` process.
-  - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
+- `codex-linux-sandbox-argv`
+  - Mainline successful Linux artifact for the corrected Rust-worker path.
+  - `arguments`: Codex Linux helper arguments after argv0/program.
+  - `data.engine`: `codex-linux-sandbox`.
+  - `data.executable`: helper executable path when the Rust worker produced the artifact.
+  - Source-aware roots, runtime roots, effects, network mode, and timeout/resource facts are carried in `filesystemLowering`, `capabilityReport`, or sibling response fields. Legacy TypeScript artifacts may include extra audit data, but Praxis should not require those extras to prove the corrected Rust helper path.
 - `macos-seatbelt-sbpl-profile`
+  - Planned/partial until generated through Codex Seatbelt lowering.
   - `arguments`: planned `/usr/bin/sandbox-exec -p <profile> -- <argv...>`.
   - `data.profile`: generated SBPL profile text.
   - `data.commandEnvMode`: `clean`.
@@ -408,6 +469,7 @@ Native planned artifact formats:
   - `data.timeoutMs`: parent-enforced timeout for the spawned `sandbox-exec` process.
   - `data.processLimits` / `data.resourceLimits`: forwarded execution limits.
 - `windows-native-token-acl-plan`
+  - Bridge/planned until direct native `windows-sandbox-rs` API smoke passes.
   - `data.runnerProtocol`: `raxcell.windowsRunner.run.v1`.
   - `data.runner`: resolved runner path, when available.
   - `data.normalizedCwd`: command cwd normalized with Windows path semantics when the request uses Windows-like paths.
@@ -475,3 +537,5 @@ import {
 - `run`
 
 The key Praxis integration point is `prepareRun`.
+
+For the consolidated Praxis boundary, see `../../docs/praxis-integration.md`.

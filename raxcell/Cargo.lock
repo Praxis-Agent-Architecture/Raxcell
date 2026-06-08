@@ -232,9 +232,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "raxcell-codex-linux-sandbox"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "libc",
+ "raxcell-codex-protocol",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "raxcell-codex-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "raxcell-codex-sandboxing"
+version = "0.1.0"
+dependencies = [
+ "raxcell-codex-protocol",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "raxcell-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
+ "raxcell-codex-protocol",
+ "raxcell-codex-sandboxing",
  "raxcell-protocol",
  "serde",
  "serde_json",
