@@ -178,6 +178,116 @@ test("runner protocol parser rejects non-run-result stdout", () => {
   );
 });
 
+test("CLI preserves Rust worker environmentGap responses on stdout only", () => {
+  const fakeRustCli = createFakeRustCli({
+    "prepare-run": {
+      kind: "raxcell.prepareRunResult.v1",
+      ok: false,
+      backend: "linux-bubblewrap",
+      denial: null,
+      policyDecision: null,
+      environmentGap: {
+        reason: "missing-backend-dependency",
+        path: "codex-linux-sandbox",
+        required: ["codex-linux-sandbox"],
+        publicSafeMessage: "Codex Linux sandbox helper is unavailable.",
+      },
+      filesystemLowering: null,
+      backendArtifacts: [],
+      capabilityReport: null,
+    },
+    run: {
+      kind: "raxcell.runResult.v1",
+      ok: false,
+      backend: "linux-bubblewrap",
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      denial: null,
+      policyDecision: null,
+      environmentGap: {
+        reason: "backend-environment-unavailable",
+        path: "codex-linux-sandbox",
+        required: ["codex-linux-sandbox"],
+        publicSafeMessage: "Codex Linux sandbox helper is unavailable.",
+      },
+      filesystemLowering: null,
+      backendArtifacts: [],
+      fallback: null,
+      capabilityReport: null,
+    },
+  });
+
+  try {
+    const request = sampleRunRequest();
+    const env = {
+      ...process.env,
+      RAXCELL_RUST_CLI: fakeRustCli.path,
+    };
+    const prepareResult = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env,
+      input: JSON.stringify(request),
+    });
+    assert.equal(prepareResult.status, 0, prepareResult.stderr);
+    assert.equal(prepareResult.stderr, "");
+    const prepareResponse = JSON.parse(prepareResult.stdout) as PrepareRunResponse;
+    assert.equal(prepareResponse.environmentGap?.reason, "missing-backend-dependency");
+    assert.equal(prepareResponse.policyDecision, null);
+    assert.deepEqual(prepareResponse.backendArtifacts, []);
+
+    const runResult = spawnSync(cliPath, ["run"], {
+      encoding: "utf8",
+      env,
+      input: JSON.stringify(request),
+    });
+    assert.equal(runResult.status, 0, runResult.stderr);
+    assert.equal(runResult.stderr, "");
+    const runResponse = JSON.parse(runResult.stdout) as RunResponse;
+    assert.equal(runResponse.environmentGap?.reason, "backend-environment-unavailable");
+    assert.equal(runResponse.policyDecision, null);
+    assert.deepEqual(runResponse.backendArtifacts, []);
+  } finally {
+    fakeRustCli.cleanup();
+  }
+});
+
+test("CLI rejects Rust worker JSON with the wrong response kind", () => {
+  const fakeRustCli = createFakeRustCli({
+    "prepare-run": {
+      kind: "raxcell.runResult.v1",
+      ok: false,
+      backend: "linux-bubblewrap",
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      denial: null,
+      policyDecision: null,
+      environmentGap: null,
+      fallback: null,
+      capabilityReport: null,
+    },
+  });
+
+  try {
+    const result = spawnSync(cliPath, ["prepare-run"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RAXCELL_RUST_CLI: fakeRustCli.path,
+      },
+      input: JSON.stringify(sampleRunRequest()),
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Rust worker prepare-run response kind must be raxcell\.prepareRunResult\.v1/);
+    assert.equal(result.stdout, "");
+  } finally {
+    fakeRustCli.cleanup();
+  }
+});
+
 test("shell effect analyzer classifies common filesystem commands", () => {
   const cwd = "/workspace";
   const cases: Array<{ script: string; path: string; access: string }> = [
@@ -1677,6 +1787,30 @@ function sampleRunRequest(): RunRequest {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function createFakeRustCli(
+  responses: Record<string, unknown>,
+): { path: string; cleanup: () => void } {
+  const root = mkdtempSync(join(tmpdir(), "raxcell-fake-rust-cli-"));
+  const path = join(root, "raxcell-rust-cli.js");
+  writeFileSync(path, [
+    "#!/usr/bin/env node",
+    `const responses = ${JSON.stringify(responses)};`,
+    "const response = responses[process.argv[2]];",
+    "process.stderr.write('rust worker debug\\n');",
+    "if (!response) {",
+    "  process.stderr.write(`unsupported command ${process.argv[2]}\\n`);",
+    "  process.exit(2);",
+    "}",
+    "process.stdout.write(`${JSON.stringify(response)}\\n`);",
+    "",
+  ].join("\n"));
+  chmodSync(path, 0o755);
+  return {
+    path,
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
 }
 
 test("explain backend response type exposes operation schema", () => {

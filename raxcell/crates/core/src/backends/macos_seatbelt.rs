@@ -1,7 +1,7 @@
 use raxcell_protocol::{
-    BackendFamily, Denial, DenialCode, FileSystemLoweringReport, LoweredRoot, LoweredRootAccess,
-    LoweredRootSource, PolicyDecisionRequired, PrepareRunResponse, ProbeResponse, RunRequest,
-    RunResponse,
+    BackendFamily, Denial, DenialCode, EnvironmentGap, FileSystemLoweringReport, LoweredRoot,
+    LoweredRootAccess, LoweredRootSource, PolicyDecisionRequired, PrepareRunResponse,
+    ProbeResponse, RunRequest, RunResponse,
 };
 use std::path::{Path, PathBuf};
 
@@ -35,6 +35,21 @@ pub fn run(request: RunRequest, capability_report: ProbeResponse) -> RunResponse
     } else {
         DenialCode::CapabilityMismatch
     };
+    let gap = if cfg!(target_os = "macos") {
+        EnvironmentGap {
+            reason: "native-runner-unattached".to_string(),
+            path: None,
+            required: vec!["backend.macos-seatbelt.runner".to_string()],
+            public_safe_message: message.to_string(),
+        }
+    } else {
+        EnvironmentGap {
+            reason: "host-platform-mismatch".to_string(),
+            path: None,
+            required: vec!["platform.macos".to_string()],
+            public_safe_message: message.to_string(),
+        }
+    };
     RunResponse {
         kind: "raxcell.runResult.v1".to_string(),
         ok: false,
@@ -48,8 +63,10 @@ pub fn run(request: RunRequest, capability_report: ProbeResponse) -> RunResponse
             message: format!("{message}; actionId={}", request.action.action_id),
             public_safe: true,
         }),
+        environment_gap: Some(gap),
         policy_decision: None,
         filesystem_lowering: None,
+        backend_artifacts: Vec::new(),
         fallback: None,
         capability_report: Some(capability_report),
     }
@@ -66,6 +83,21 @@ pub fn prepare_run(request: RunRequest, capability_report: ProbeResponse) -> Pre
     } else {
         DenialCode::CapabilityMismatch
     };
+    let gap = if cfg!(target_os = "macos") {
+        EnvironmentGap {
+            reason: "native-runner-unattached".to_string(),
+            path: None,
+            required: vec!["backend.macos-seatbelt.prepare".to_string()],
+            public_safe_message: message.to_string(),
+        }
+    } else {
+        EnvironmentGap {
+            reason: "host-platform-mismatch".to_string(),
+            path: None,
+            required: vec!["platform.macos".to_string()],
+            public_safe_message: message.to_string(),
+        }
+    };
     PrepareRunResponse {
         kind: "raxcell.prepareRunResult.v1".to_string(),
         ok: false,
@@ -75,6 +107,7 @@ pub fn prepare_run(request: RunRequest, capability_report: ProbeResponse) -> Pre
             message: format!("{message}; actionId={}", request.action.action_id),
             public_safe: true,
         }),
+        environment_gap: Some(gap),
         policy_decision: None,
         filesystem_lowering: None,
         backend_artifacts: Vec::new(),

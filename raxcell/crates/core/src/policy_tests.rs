@@ -1,5 +1,5 @@
 use super::policy::{PolicyResolutionError, resolve_profile};
-use raxcell_protocol::ResolveProfileRequest;
+use raxcell_protocol::{BackendFamily, ResolveProfileRequest};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -26,6 +26,29 @@ fn request(path: String) -> ResolveProfileRequest {
             ("workspace".to_string(), "/workspace/project".to_string()),
             ("home".to_string(), "/home/agent".to_string()),
             ("tmp".to_string(), "/tmp/raxcell".to_string()),
+        ]),
+    }
+}
+
+fn praxis_profiles_fixture_request(profile: &str) -> ResolveProfileRequest {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/policy.praxis-profiles.yaml");
+    ResolveProfileRequest {
+        kind: "raxcell.resolveProfile.v1".to_string(),
+        pack_paths: vec![fixture.to_string_lossy().into_owned()],
+        profile: profile.to_string(),
+        variables: BTreeMap::from([
+            ("workspace".to_string(), "/workspace/project".to_string()),
+            ("home".to_string(), "/home/agent".to_string()),
+            ("tmp".to_string(), "/tmp/raxcell".to_string()),
+            (
+                "approvedExternalRead".to_string(),
+                "/mnt/approved-read".to_string(),
+            ),
+            (
+                "approvedExternalWrite".to_string(),
+                "/mnt/approved-write".to_string(),
+            ),
         ]),
     }
 }
@@ -226,4 +249,108 @@ fn no_filesystem_write_preset_tightens_parent_write_roots() {
     resolve_request.pack_paths.insert(0, parent);
     let resolved = resolve_profile(resolve_request).unwrap();
     assert!(resolved.enforcement.filesystem["write"].is_empty());
+}
+
+#[test]
+fn resolves_praxis_profile_examples_fixture() {
+    let expected = [
+        (
+            "host-observed",
+            "allow",
+            vec![],
+            vec![],
+            vec![BackendFamily::HostObserved],
+        ),
+        (
+            "workspace-readonly-no-network",
+            "deny",
+            vec!["/workspace/project"],
+            vec![],
+            vec![BackendFamily::LinuxBubblewrap],
+        ),
+        (
+            "workspace-write-no-network",
+            "deny",
+            vec!["/workspace/project", "/home/agent/.cache"],
+            vec!["/workspace/project", "/tmp/raxcell/build"],
+            vec![BackendFamily::LinuxBubblewrap],
+        ),
+        (
+            "workspace-write-network",
+            "allow",
+            vec!["/workspace/project", "/home/agent/.cache"],
+            vec!["/workspace/project", "/tmp/raxcell/build"],
+            vec![BackendFamily::LinuxBubblewrap],
+        ),
+        (
+            "external-read-approved",
+            "deny",
+            vec!["/workspace/project", "/mnt/approved-read"],
+            vec![],
+            vec![BackendFamily::LinuxBubblewrap],
+        ),
+        (
+            "external-write-approved",
+            "deny",
+            vec!["/workspace/project", "/mnt/approved-write"],
+            vec!["/workspace/project", "/mnt/approved-write"],
+            vec![BackendFamily::LinuxBubblewrap],
+        ),
+        (
+            "strict-fail-closed",
+            "deny",
+            vec!["/workspace/project"],
+            vec![],
+            vec![BackendFamily::LinuxBubblewrap],
+        ),
+        (
+            "debug-artifact-rich",
+            "deny",
+            vec![
+                "/workspace/project",
+                "/home/agent/.cache",
+                "/tmp/raxcell/debug",
+            ],
+            vec![
+                "/workspace/project",
+                "/tmp/raxcell/build",
+                "/tmp/raxcell/debug",
+            ],
+            vec![BackendFamily::LinuxBubblewrap],
+        ),
+    ];
+
+    for (profile, network, read_roots, write_roots, backend_preference) in expected {
+        let resolved = resolve_profile(praxis_profiles_fixture_request(profile)).unwrap();
+        assert_eq!(resolved.profile, profile);
+        assert_eq!(resolved.enforcement.profile, profile);
+        assert_eq!(resolved.enforcement.network, Some(network.to_string()));
+        assert_eq!(
+            resolved.enforcement.filesystem["read"],
+            read_roots
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            resolved.enforcement.filesystem["write"],
+            write_roots
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(resolved.backend_preference, backend_preference);
+        assert_eq!(resolved.fallback.mode, "none");
+        assert_eq!(
+            resolved.enforcement.process["spawn"],
+            serde_json::json!(true)
+        );
+        assert!(resolved.enforcement.resources.contains_key("timeoutMs"));
+        assert!(
+            resolved
+                .enforcement
+                .resources
+                .contains_key("maxOutputBytes")
+        );
+    }
 }

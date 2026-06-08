@@ -238,10 +238,44 @@ function runLinuxRustWorkerJson(
     throw new Error(result.stderr.trim() || `Raxcell Rust worker exited with code ${result.status}`);
   }
   try {
-    return JSON.parse(result.stdout.trim());
+    const parsed = JSON.parse(result.stdout.trim());
+    validateRustWorkerResponseKind(command, parsed);
+    return parsed;
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Rust worker ")) {
+      throw error;
+    }
     throw new Error(`Invalid JSON from Raxcell Rust worker: ${String(error)}`);
   }
+}
+
+function validateRustWorkerResponseKind(
+  command: "probe" | "explain-backend" | "prepare-run" | "run",
+  value: unknown,
+): void {
+  const expectedKind = rustWorkerResponseKind(command);
+  if (!isRecord(value) || value.kind !== expectedKind) {
+    throw new Error(`Rust worker ${command} response kind must be ${expectedKind}`);
+  }
+}
+
+function rustWorkerResponseKind(
+  command: "probe" | "explain-backend" | "prepare-run" | "run",
+): string {
+  switch (command) {
+    case "probe":
+      return "raxcell.probeResult.v1";
+    case "explain-backend":
+      return "raxcell.explainBackendResult.v1";
+    case "prepare-run":
+      return "raxcell.prepareRunResult.v1";
+    case "run":
+      return "raxcell.runResult.v1";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function linuxRustWorkerPath(): string | null {

@@ -10,27 +10,38 @@ Raxcell is not Praxis-specific. Praxis is the first target runtime, but the cont
 
 Current npm package: `@praxis-ai/raxcell@0.1.5`
 
-Linux and macOS are executable today through the TypeScript CLI package:
+Raxcell is Linux-first today:
 
-- `linux-bubblewrap` executes commands through bubblewrap.
-- `macos-seatbelt` executes commands through `/usr/bin/sandbox-exec` on macOS hosts.
+- The corrected Linux path is Codex core-backed through the Rust worker and
+  returns `codex-linux-sandbox-argv`.
+- The public Linux backend family can still be `linux-bubblewrap` for
+  compatibility.
+- The old direct-bwrap TypeScript path can still return `linux-bubblewrap-argv`,
+  but that is a legacy fallback artifact.
 - Filesystem read/write roots are declared per request.
 - Explicit `policyGrants` can add host path access after an upper runtime has approved it.
 - Write grants are mounted so approved external writes land on the host, not in a sandbox shadow path.
-- Network deny uses bubblewrap network isolation on Linux and SBPL network denial on macOS.
+- Network deny uses the selected sandbox backend boundary.
 - Timeouts are enforced by Raxcell process management.
 - `prepareRun` returns `filesystemLowering`, analyzer effects, and backend-specific `backendArtifacts`.
-- Linux `backendArtifacts` include the complete bubblewrap argv.
-- macOS `backendArtifacts` include the generated Seatbelt profile, sandbox-exec argv, and backend runtime read roots.
+- Linux mainline `backendArtifacts` identify the Codex Linux helper program and
+  arguments.
 
-macOS and Windows are protocol-visible native backend families:
+macOS and Windows are protocol-visible native backend families, but should be
+described conservatively:
 
 - `macos-seatbelt`
 - `windows-elevated`
 - `windows-unelevated`
 - `windows-native`
 
-The `0.1.x` npm CLI executes Linux bubblewrap on Linux and macOS Seatbelt on macOS. Windows execution is delegated to a native runner contract: on Windows, Raxcell looks for `RAXCELL_WINDOWS_RUNNER` or `raxcell-windows-runner`; without that runner it returns native capability facts, planned lowering artifacts, and fail-closed environment gaps.
+`macos-seatbelt` is planned/partial until Codex Seatbelt lowering is wired.
+Using `/usr/bin/sandbox-exec` is the same OS primitive, not proof that the
+Codex lowering path produced the profile. Windows execution is a bridge/planned
+path until direct native `windows-sandbox-rs` API smoke passes. On Windows,
+Raxcell looks for `RAXCELL_WINDOWS_RUNNER` or `raxcell-windows-runner`; without
+that runner it returns native capability facts, planned lowering artifacts, and
+fail-closed environment gaps.
 
 Native planned artifacts are backend-specific:
 
@@ -119,8 +130,13 @@ Praxis / Agent Harness
   -> policy middleware
   -> RaxcellClient
   -> raxcell CLI JSON stdin/stdout
-  -> linux-bubblewrap / macos-seatbelt / windows-native
+  -> Codex core-backed Linux / planned macOS / Windows bridge
 ```
+
+`policyGrants` are upper-runtime-issued capability tickets. Raxcell validates
+and lowers them, but it does not invent them, ask for them, persist them, or
+turn backend runtime roots into grants. Raxcell fails closed and must not
+auto-fallback to host execution.
 
 ## Install
 
@@ -217,7 +233,8 @@ It can return:
 
 - `ok: true`: the requested sandbox can be prepared with the supplied declarations and grants.
 - `policyDecision.reason = "path-outside-declared-roots"`: a concrete path needs upper-runtime policy handling.
-- `environmentGap.reason = "shell-dynamic-path-unresolved"`: a dynamic shell path cannot be normalized safely.
+- `environmentGap.reason = "dynamic-shell-path-unresolved"`: a dynamic shell path cannot be normalized safely in the corrected Rust path.
+- `environmentGap.reason = "shell-dynamic-path-unresolved"`: legacy TypeScript direct-backend spelling for the same route.
 - `environmentGap.reason = "missing-backend-dependency"`: the selected backend cannot run on this host.
 - `environmentGap.reason = "host-platform-mismatch"`: the requested native backend belongs to a different host platform.
 - `environmentGap.reason = "native-backend-runner-unattached"`: the native backend is selected on the right host, but the executable runner is not attached yet.
@@ -238,9 +255,9 @@ Dynamic shell paths use `environmentGap` and are not expanded by Raxcell:
 
 ```json
 {
-  "reason": "shell-dynamic-path-unresolved",
+  "reason": "dynamic-shell-path-unresolved",
   "path": "$HOME/a.txt",
-  "required": ["write"],
+  "required": ["command.rewrite.static-path"],
   "publicSafeMessage": "The command contains a dynamic shell path that Raxcell cannot safely normalize."
 }
 ```
@@ -283,12 +300,15 @@ If the sandbox launches correctly and the command exits nonzero:
 
 Use `exitCode`, `stdout`, and `stderr` for command-level behavior. Use `ok: false`, `denial`, `policyDecision`, or `environmentGap` for sandbox/provider-level failure.
 
+For the consolidated Praxis adapter semantics, backend artifact formats, and
+decision table, see `docs/praxis-integration.md`.
+
 ## Repository Layout
 
-- `raxcell/sdk`: TypeScript npm package and CLI for Linux bubblewrap, macOS Seatbelt, and the Windows native runner bridge.
+- `raxcell/sdk`: TypeScript npm package and CLI facade for Linux, macOS, and Windows runner bridge paths.
 - `raxcell/sdk/src/types.ts`: JSON protocol types.
 - `raxcell/sdk/src/client.ts`: TypeScript client that spawns the CLI.
-- `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI plus Linux bubblewrap and macOS Seatbelt runners.
+- `raxcell/sdk/src/cli.ts`: executable `raxcell` CLI facade plus legacy direct backend paths.
 - `raxcell/sdk/src/shell-effects.ts`: shell filesystem effect analyzer.
 - `raxcell`: Rust workspace retained for protocol/backend research.
 - `specs/raxcell`: extraction plans and integration docs.

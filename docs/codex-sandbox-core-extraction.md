@@ -61,12 +61,17 @@ Raxcell owns:
 - returning `stdout`, `stderr`, `exitCode`, `timedOut`, `denial`,
   `environmentGap`, and backend facts.
 
+Raxcell fails closed. If a backend cannot be prepared or launched, Raxcell
+returns `denial` and/or `environmentGap` facts; it must not silently run on the
+host.
+
 Raxcell does not own:
 
 - human approval;
 - Praxis policy matrices;
 - prompt or tool intent interpretation;
 - audit persistence;
+- fallback, retry, rewrite, or deny decisions;
 - session, rollout, or harness state;
 - Codex app, IDE, CLI, or model behavior.
 
@@ -126,8 +131,8 @@ Reusable concepts:
 - protected metadata path names such as `.git`, `.agents`, and `.codex`
 
 Raxcell should map its `RunRequest.enforcement` and `policyGrants` into this
-permission model. Upper runtimes still decide the grants; Raxcell only consumes
-them as facts.
+permission model. Upper runtimes still decide the grants; Raxcell only validates
+and lowers them as facts.
 
 ### Sandbox transformation layer
 
@@ -369,12 +374,32 @@ Contract invariants:
 - `environmentGap` and `denial` are explicit and public-safe enough for an upper
   runtime to route or display.
 
-Current protocol gap to close before the Rust worker becomes npm-facing:
+Current protocol convergence:
 
-- TypeScript responses already expose `environmentGap`.
-- Rust `raxcell-protocol` responses should add the same field on
-  `PrepareRunResponse` and `RunResponse` before Linux routing is switched over.
-- This keeps environment gaps distinct from denials and policy decisions.
+- `RunRequest` is shared by `prepare-run` and `run`.
+- `RunRequest.backendPreference` carries the upper runtime's ordered backend
+  request. It does not grant policy.
+- `RunRequest.policyGrants` carries upper-runtime-issued capability tickets.
+  Raxcell does not invent them.
+- `PrepareRunResponse` returns `denial`, `environmentGap`, `policyDecision`,
+  `filesystemLowering`, `backendArtifacts`, and `capabilityReport` without
+  spawning the command.
+- `RunResponse` returns the same policy/environment/backend facts plus
+  `stdout`, `stderr`, `exitCode`, and `timedOut`.
+- TypeScript SDK types and Rust protocol structs use the same camelCase JSON
+  fields for these shared objects.
+
+Decision routing rule:
+
+| Fact | Route |
+| --- | --- |
+| `policyDecision` | Concrete cwd/path capability needs Praxis policy, approval, rewrite, deny, or grant. |
+| `environmentGap` | Host/backend/environment fact is unresolved; Praxis can route, ask, rewrite, install, or deny. |
+| `denial` | Raxcell/backend refuses or cannot safely proceed; Praxis handles deny/retry/rewrite/fallback outside Raxcell. |
+| `run.ok=true` with `exitCode!=0` | Command ran in the sandbox and failed at command level, not sandbox level. |
+
+See `docs/praxis-integration.md` for the complete adapter table and audit
+field list.
 
 ## Platform Backend Plan
 
@@ -494,6 +519,8 @@ Docs and fixtures should converge on:
 - macOS status: temporary local SBPL until Codex Seatbelt lowering is used.
 - Windows status: temporary Codex CLI bridge until native Codex Windows backend
   APIs are used directly.
+- `raxcell/fixtures/policy.praxis-profiles.yaml` is a parseable profile/lowering
+  template, not the Raxcell policy brain.
 
 Recommended follow-up docs:
 

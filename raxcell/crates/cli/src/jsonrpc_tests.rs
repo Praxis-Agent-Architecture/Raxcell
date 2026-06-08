@@ -199,7 +199,9 @@ fn run_payload_emits_policy_decision_required_event() {
             required: vec!["filesystem.read".to_string()],
             public_safe_message: "upper policy decision required".to_string(),
         }),
+        environment_gap: None,
         filesystem_lowering: None,
+        backend_artifacts: Vec::new(),
         fallback: None,
         capability_report: None,
     };

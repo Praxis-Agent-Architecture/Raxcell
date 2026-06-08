@@ -36,9 +36,21 @@ fn run_fails_closed_when_backend_is_not_ready() {
     let response = run(request);
     assert!(!response.ok);
     assert_eq!(
-        response.denial.unwrap().code,
+        response.denial.as_ref().unwrap().code,
         DenialCode::CapabilityMismatch
     );
+    assert_eq!(
+        response
+            .environment_gap
+            .as_ref()
+            .map(|gap| gap.reason.as_str()),
+        Some(if cfg!(target_os = "macos") {
+            "native-runner-unattached"
+        } else {
+            "host-platform-mismatch"
+        })
+    );
+    assert_eq!(response.policy_decision, None);
 }
 
 #[test]
@@ -60,7 +72,15 @@ fn legacy_fail_closed_helper_still_refuses_ready_backends() {
     let response = run_fail_closed(sample_run_request(), capability_report);
     assert!(!response.ok);
     assert_eq!(
-        response.denial.unwrap().code,
+        response.denial.as_ref().unwrap().code,
         DenialCode::BackendUnavailable
     );
+    assert_eq!(
+        response
+            .environment_gap
+            .as_ref()
+            .map(|gap| gap.reason.as_str()),
+        Some("backend-capability-gap")
+    );
+    assert_eq!(response.policy_decision, None);
 }

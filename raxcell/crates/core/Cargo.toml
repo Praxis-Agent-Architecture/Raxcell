@@ -13,6 +13,7 @@ doctest = false
 raxcell-codex-protocol = { path = "../codex-protocol" }
 raxcell-codex-sandboxing = { path = "../codex-sandboxing" }
 raxcell-protocol = { path = "../protocol" }
+libc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

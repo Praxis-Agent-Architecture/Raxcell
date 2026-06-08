@@ -263,6 +263,7 @@ dependencies = [
 name = "raxcell-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "raxcell-codex-protocol",
  "raxcell-codex-sandboxing",
  "raxcell-protocol",

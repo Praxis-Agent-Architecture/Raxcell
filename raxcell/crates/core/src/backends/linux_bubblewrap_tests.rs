@@ -11,6 +11,11 @@ use raxcell_protocol::{BackendFamily, CapabilityLevel, ProbeResponse, RunRequest
 use raxcell_protocol::{LoweredRootAccess, LoweredRootSource};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
+
+static FAKE_HELPER_ID: AtomicUsize = AtomicUsize::new(0);
+static FAKE_HELPER_LOCK: Mutex<()> = Mutex::new(());
 
 fn sample_run_request() -> RunRequest {
     serde_json::from_value(serde_json::json!({
@@ -80,12 +85,20 @@ fn temp_effect_root(name: &str) -> PathBuf {
     root
 }
 
+fn fake_helper_path(name: &str) -> PathBuf {
+    let id = FAKE_HELPER_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("raxcell-{name}-{}-{id}", std::process::id()))
+}
+
+fn fake_helper_test_lock() -> MutexGuard<'static, ()> {
+    FAKE_HELPER_LOCK.lock().unwrap()
+}
+
 #[cfg(unix)]
 fn fake_codex_linux_sandbox_helper() -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
-    let helper =
-        std::env::temp_dir().join(format!("raxcell-fake-codex-helper-{}", std::process::id()));
+    let helper = fake_helper_path("fake-codex-helper");
     std::fs::write(
         &helper,
         "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo 'codex-linux-sandbox --sandbox-policy-cwd'; exit 0; fi\necho 'invalid permission profile JSON for --permission-profile' >&2\nexit 1\n",
@@ -122,9 +135,10 @@ fn run_reports_backend_success_when_command_exits_nonzero() {
 
     let response = run(request, ready_capability_report());
 
-    assert!(response.ok);
+    assert!(response.ok, "{response:?}");
     assert_eq!(response.exit_code, Some(7));
     assert_eq!(response.denial, None);
+    assert_eq!(response.environment_gap, None);
     assert_eq!(response.policy_decision, None);
 }
 
@@ -148,6 +162,7 @@ fn run_reports_backend_success_when_command_exits_nonzero_with_backend_like_stde
     assert_eq!(response.exit_code, Some(9));
     assert!(response.stderr.contains("bwrap: user command stderr"));
     assert_eq!(response.denial, None);
+    assert_eq!(response.environment_gap, None);
     assert_eq!(response.policy_decision, None);
 }
 
@@ -297,6 +312,15 @@ fn codex_linux_transform_lowers_non_cwd_policy_grant_as_additional_permission() 
                 FileSystemPath::Path { path } if path == &canonical_grant_root
             )
     }));
+    assert!(
+        transformed
+            .filesystem_lowering
+            .declared_roots
+            .iter()
+            .any(|root| root.path == canonical_grant_root.to_string_lossy()
+                && root.access == LoweredRootAccess::Read
+                && root.source == LoweredRootSource::PolicyGrant)
+    );
 }
 
 #[test]
@@ -352,6 +376,50 @@ fn codex_linux_transform_requires_policy_decision_for_shell_external_redirection
     assert_eq!(decision.required, vec!["filesystem.write".to_string()]);
 }
 
+#[cfg(unix)]
+#[test]
+fn prepare_run_reports_environment_gap_for_dynamic_shell_path() {
+    let _guard = fake_helper_test_lock();
+    let helper = fake_codex_linux_sandbox_helper();
+    let mut request = sample_run_request();
+    request.command.argv = vec![
+        "/bin/sh".to_string(),
+        "-lc".to_string(),
+        "printf hello > $OUT_FILE".to_string(),
+    ];
+
+    let response =
+        prepare_run_with_helper_path_for_test(request, ready_capability_report(), &helper);
+
+    let _ = std::fs::remove_file(&helper);
+
+    assert!(!response.ok);
+    assert_eq!(response.policy_decision, None);
+    assert_eq!(
+        response
+            .environment_gap
+            .as_ref()
+            .map(|gap| gap.reason.as_str()),
+        Some("dynamic-shell-path-unresolved")
+    );
+}
+
+#[test]
+fn codex_linux_transform_allows_literal_dollar_in_direct_argv_path() {
+    let mut request = sample_run_request();
+    request.command.argv = vec!["/usr/bin/touch".to_string(), "out$1".to_string()];
+    let cwd = std::fs::canonicalize(".").unwrap();
+
+    let transformed =
+        codex_linux_sandbox_transform_for_test(&request, "/opt/raxcell/helper".as_ref(), &cwd)
+            .expect("direct argv dollar path should be treated as a literal filename");
+
+    assert_eq!(
+        transformed.command.program,
+        PathBuf::from("/opt/raxcell/helper")
+    );
+}
+
 #[test]
 fn codex_linux_transform_rejects_read_grant_for_shell_external_write() {
     let effect_root = temp_effect_root("read-grant-write");
@@ -382,6 +450,7 @@ fn codex_linux_transform_rejects_read_grant_for_shell_external_write() {
 #[cfg(unix)]
 #[test]
 fn prepare_run_accepts_write_grant_for_shell_external_write_and_keeps_codex_artifact() {
+    let _guard = fake_helper_test_lock();
     let effect_root = temp_effect_root("write-grant-write");
     let target = effect_root.join("out.txt");
     let helper = fake_codex_linux_sandbox_helper();
@@ -407,6 +476,86 @@ fn prepare_run_accepts_write_grant_for_shell_external_write_and_keeps_codex_arti
         response.backend_artifacts[0].format,
         "codex-linux-sandbox-argv"
     );
+    assert!(
+        response
+            .filesystem_lowering
+            .as_ref()
+            .unwrap()
+            .declared_roots
+            .iter()
+            .any(|root| root.path == effect_root.to_string_lossy()
+                && root.access == LoweredRootAccess::Write
+                && root.source == LoweredRootSource::PolicyGrant)
+    );
+}
+
+#[test]
+fn prepare_run_reports_policy_decision_for_shell_external_write_before_missing_helper() {
+    let effect_root = temp_effect_root("missing-helper-policy-first");
+    let target = effect_root.join("out.txt");
+    let missing_helper = fake_helper_path("missing-helper-policy-first");
+    let _ = std::fs::remove_file(&missing_helper);
+    let mut request = sample_run_request();
+    request.command.argv = vec![
+        "/bin/sh".to_string(),
+        "-lc".to_string(),
+        format!("printf hello > {}", target.to_string_lossy()),
+    ];
+
+    let response =
+        prepare_run_with_helper_path_for_test(request, ready_capability_report(), &missing_helper);
+
+    let _ = std::fs::remove_dir_all(&effect_root);
+
+    assert!(!response.ok);
+    assert_eq!(response.environment_gap, None);
+    let decision = response.policy_decision.unwrap();
+    assert_eq!(decision.reason, "shell-effect-outside-declared-roots");
+    assert_eq!(decision.required, vec!["filesystem.write".to_string()]);
+}
+
+#[test]
+fn prepare_run_rejects_read_grant_for_shell_external_write_before_missing_helper() {
+    let effect_root = temp_effect_root("missing-helper-read-grant-write");
+    let target = effect_root.join("out.txt");
+    let missing_helper = fake_helper_path("missing-helper-read-grant-write");
+    let _ = std::fs::remove_file(&missing_helper);
+    let mut request = sample_run_request();
+    request.command.argv = vec![
+        "/bin/sh".to_string(),
+        "-lc".to_string(),
+        format!("printf hello > {}", target.to_string_lossy()),
+    ];
+    add_policy_grant(&mut request, &effect_root, "read");
+
+    let response =
+        prepare_run_with_helper_path_for_test(request, ready_capability_report(), &missing_helper);
+
+    let _ = std::fs::remove_dir_all(&effect_root);
+
+    assert!(!response.ok);
+    assert_eq!(response.environment_gap, None);
+    let decision = response.policy_decision.unwrap();
+    assert_eq!(decision.reason, "shell-effect-outside-declared-roots");
+    assert_eq!(decision.required, vec!["filesystem.write".to_string()]);
+}
+
+#[test]
+fn prepare_run_reports_environment_gap_for_missing_helper_after_static_policy_clears() {
+    let missing_helper = fake_helper_path("missing-helper-policy-clear");
+    let _ = std::fs::remove_file(&missing_helper);
+
+    let response = prepare_run_with_helper_path_for_test(
+        sample_run_request(),
+        ready_capability_report(),
+        &missing_helper,
+    );
+
+    assert!(!response.ok);
+    assert_eq!(response.policy_decision, None);
+    let gap = response.environment_gap.unwrap();
+    assert_eq!(gap.reason, "missing-backend-dependency");
+    assert_eq!(gap.path.as_deref(), Some("codex-linux-sandbox"));
 }
 
 #[test]
@@ -453,9 +602,12 @@ fn run_reports_backend_failure_when_helper_cannot_be_resolved() {
 
     assert!(!response.ok);
     assert_eq!(response.exit_code, None);
+    let gap = response.environment_gap.as_ref().unwrap();
+    assert_eq!(gap.reason, "missing-backend-dependency");
+    assert_eq!(gap.path.as_deref(), Some("codex-linux-sandbox"));
     assert_eq!(
-        response.denial.unwrap().code,
-        raxcell_protocol::DenialCode::SandboxDenied
+        response.denial.as_ref().unwrap().code,
+        raxcell_protocol::DenialCode::BackendUnavailable
     );
     assert_eq!(response.filesystem_lowering, None);
     assert_eq!(response.fallback, None);
@@ -466,10 +618,8 @@ fn run_reports_backend_failure_when_helper_cannot_be_resolved() {
 fn run_reports_backend_failure_when_spawned_helper_preflight_fails() {
     use std::os::unix::fs::PermissionsExt;
 
-    let fake_helper = std::env::temp_dir().join(format!(
-        "raxcell-fake-codex-linux-sandbox-{}",
-        std::process::id()
-    ));
+    let _guard = fake_helper_test_lock();
+    let fake_helper = fake_helper_path("fake-codex-linux-sandbox");
     std::fs::write(
         &fake_helper,
         "#!/bin/sh\necho unexpected helper failure >&2\nexit 42\n",
@@ -489,8 +639,18 @@ fn run_reports_backend_failure_when_spawned_helper_preflight_fails() {
 
     assert!(!response.ok);
     assert_eq!(response.exit_code, None);
+    assert_eq!(
+        response
+            .environment_gap
+            .as_ref()
+            .map(|gap| gap.reason.as_str()),
+        Some("backend-capability-gap")
+    );
     let denial = response.denial.unwrap();
-    assert_eq!(denial.code, raxcell_protocol::DenialCode::SandboxDenied);
+    assert_eq!(
+        denial.code,
+        raxcell_protocol::DenialCode::BackendUnavailable
+    );
     assert!(denial.message.contains("helper preflight failed"));
     assert_eq!(response.filesystem_lowering, None);
     assert_eq!(response.fallback, None);
@@ -501,8 +661,8 @@ fn run_reports_backend_failure_when_spawned_helper_preflight_fails() {
 fn run_reports_backend_failure_when_helper_help_text_is_not_codex_sandbox() {
     use std::os::unix::fs::PermissionsExt;
 
-    let fake_helper =
-        std::env::temp_dir().join(format!("raxcell-fake-helper-help-{}", std::process::id()));
+    let _guard = fake_helper_test_lock();
+    let fake_helper = fake_helper_path("fake-helper-help");
     std::fs::write(
         &fake_helper,
         "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo 'not the sandbox helper'; exit 0; fi\necho unexpected helper failure >&2\nexit 42\n",
@@ -522,11 +682,70 @@ fn run_reports_backend_failure_when_helper_help_text_is_not_codex_sandbox() {
 
     assert!(!response.ok);
     assert_eq!(response.exit_code, None);
+    assert_eq!(
+        response
+            .environment_gap
+            .as_ref()
+            .map(|gap| gap.reason.as_str()),
+        Some("backend-capability-gap")
+    );
     let denial = response.denial.unwrap();
-    assert_eq!(denial.code, raxcell_protocol::DenialCode::SandboxDenied);
+    assert_eq!(
+        denial.code,
+        raxcell_protocol::DenialCode::BackendUnavailable
+    );
     assert!(denial.message.contains("helper preflight"));
     assert_eq!(response.filesystem_lowering, None);
     assert_eq!(response.fallback, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn run_timeout_kills_helper_descendants_before_they_write_output() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = fake_helper_test_lock();
+    let fake_helper = fake_helper_path("fake-timeout-helper");
+    std::fs::write(
+        &fake_helper,
+        r#"#!/bin/sh
+if [ "$1" = "--help" ]; then
+  echo 'codex-linux-sandbox --sandbox-policy-cwd'
+  exit 0
+fi
+for arg in "$@"; do
+  if [ "$arg" = "{not-json" ]; then
+    echo 'invalid permission profile JSON for --permission-profile' >&2
+    exit 1
+  fi
+done
+(sleep 0.2; printf after-timeout) &
+sleep 5
+"#,
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&fake_helper).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_helper, permissions).unwrap();
+
+    let mut request = sample_run_request();
+    request
+        .enforcement
+        .resources
+        .insert("timeoutMs".to_string(), serde_json::json!(50));
+
+    let response = run_with_helper_path_for_test(request, ready_capability_report(), &fake_helper);
+
+    let _ = std::fs::remove_file(&fake_helper);
+
+    assert!(!response.ok);
+    assert!(response.timed_out);
+    assert_eq!(response.exit_code, None);
+    assert_eq!(
+        response.denial.as_ref().map(|denial| denial.code.clone()),
+        Some(raxcell_protocol::DenialCode::Timeout)
+    );
+    assert!(!response.stdout.contains("after-timeout"));
 }
 
 #[test]

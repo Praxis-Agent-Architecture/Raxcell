@@ -52,6 +52,7 @@ fn prepare_run_lowers_linux_request_without_executing_command() {
             .iter()
             .any(|arg| arg == "--permission-profile")
     );
+    assert!(response.environment_gap.is_none());
 }
 
 #[test]
@@ -81,6 +82,7 @@ fn prepare_run_returns_policy_decision_when_cwd_is_outside_declared_roots() {
             .map(|decision| decision.reason.as_str()),
         Some("cwd-outside-declared-roots")
     );
+    assert!(response.environment_gap.is_none());
     assert!(response.filesystem_lowering.is_none());
     assert!(response.backend_artifacts.is_empty());
 }
